@@ -8,7 +8,7 @@
     :root{
       --bg:#090304;
       --panel:rgba(15,7,7,0.82);
-      --panel-border:rgba(255,114,58,0.26);
+      --panel-border:rgba(255,244,230,0.10);
       --text:#fff7ee;
       --muted:#c9b6a9;
       --accent:#ff6b2d;
@@ -17,20 +17,25 @@
       --shadow:0 20px 60px rgba(0,0,0,0.45);
       --title-font:"Arial Narrow",Impact,Haettenschweiler,sans-serif;
     }
-    html,body{height:100%;margin:0}
+    html,body{
+      height:100%;
+      min-height:100svh;
+      margin:0;
+      overflow:hidden;
+    }
     body{
       font-family:Arial,Helvetica,sans-serif;
       user-select:none;
       color:var(--text);
       background:#2b211a;
       position:relative;
-      overflow-x:hidden;
+      overflow:hidden;
     }
     body::before{
       content:"";
       position:fixed;
       inset:0;
-      background:url("https://raw.githubusercontent.com/https-deeplearning-ai/lc-build-with-andrew-platform/main/img/tabletennis43.jpg") center 42%/contain no-repeat;
+      background:url("https://raw.githubusercontent.com/https-deeplearning-ai/lc-build-with-andrew-platform/main/img/tabletennis43.jpg") center 58%/100% auto no-repeat;
       opacity:1;
       pointer-events:none;
     }
@@ -47,21 +52,25 @@
     .pageShell{
       position:relative;
       z-index:1;
-      min-height:100%;
-      width:min(1120px,100%);
+      height:100svh;
+      width:min(1240px,100%);
       margin:0 auto;
-      padding:32px 24px 28px;
+      padding:20px 20px 18px;
       display:flex;
       flex-direction:column;
+      overflow:hidden;
     }
     #gameContainer{
       position:relative;
       overflow:hidden;
       border-radius:28px;
-      padding:28px;
-      min-height:calc(100vh - 60px);
+      padding:20px;
+      height:100%;
+      min-height:0;
+      display:flex;
+      flex-direction:column;
       background:linear-gradient(180deg,rgba(19,13,8,0.14),rgba(12,8,6,0.24));
-      border:1px solid rgba(255,114,58,0.18);
+      border:none;
       box-shadow:var(--shadow);
     }
     #gameContainer::before{
@@ -87,14 +96,17 @@
       justify-content:center;
       align-items:center;
       width:100%;
+      flex:1;
+      min-height:0;
       transition:opacity .25s ease, transform .25s ease;
     }
     .homePanel{
       width:min(100%, 520px);
-      padding:30px 34px 28px;
+      max-height:100%;
+      padding:24px 28px 22px;
       border-radius:28px;
       background:linear-gradient(180deg,rgba(18,10,8,0.46),rgba(12,7,6,0.62));
-      border:1px solid rgba(255,132,72,0.18);
+      border:1px solid rgba(255,245,236,0.08);
       box-shadow:0 30px 70px rgba(0,0,0,0.34);
       backdrop-filter:blur(4px);
     }
@@ -106,7 +118,7 @@
     }
     .sideCard{
       display:block;
-      padding:14px 16px 16px;
+      padding:12px 14px 14px;
       background:var(--panel);
       border:1px solid var(--panel-border);
       border-radius:18px;
@@ -131,7 +143,7 @@
     select,input[type="number"]{
       padding:10px 12px;
       font-size:14px;
-      border:1px solid rgba(255,153,102,0.25);
+      border:1px solid rgba(255,245,236,0.12);
       color:#fff4ea;
       background:rgba(255,255,255,0.06);
       border-radius:10px;
@@ -142,10 +154,10 @@
     }
     .menuTitleFrame{
       width:100%;
-      min-height:150px;
+      min-height:124px;
       display:grid;
       place-items:center;
-      padding:18px 14px 26px;
+      padding:14px 12px 20px;
       position:relative;
     }
     .menuTitleFrame::before,
@@ -178,7 +190,7 @@
       width:100%;
       display:flex;
       flex-direction:column;
-      gap:16px;
+      gap:12px;
     }
     .heroActions{
       display:grid;
@@ -192,7 +204,7 @@
       color:#fff9f4;
       background:linear-gradient(90deg,var(--accent),var(--accent-2));
       clip-path:polygon(8% 0,100% 0,94% 100%,0 100%);
-      min-height:54px;
+      min-height:50px;
       padding:12px 28px;
       font:700 24px/1 var(--title-font);
       letter-spacing:.04em;
@@ -244,7 +256,7 @@
       padding:12px 14px;
       background:rgba(255,255,255,0.05);
       border-radius:12px;
-      border:1px solid rgba(255,153,102,0.12);
+      border:1px solid rgba(255,245,236,0.10);
       color:#f1ddd2;
       font-size:13px;
       line-height:1.45;
@@ -266,7 +278,7 @@
       padding:22px;
       border-radius:22px;
       background:linear-gradient(180deg,rgba(21,12,10,0.94),rgba(14,8,7,0.96));
-      border:1px solid rgba(255,132,72,0.22);
+      border:1px solid rgba(255,245,236,0.10);
       box-shadow:0 28px 70px rgba(0,0,0,0.4);
     }
     .modalTitle{
@@ -294,27 +306,45 @@
       z-index:2;
       align-items:center;
       gap:10px;
+      justify-content:space-between;
       flex-wrap:wrap;
       margin-bottom:18px;
       padding:14px 16px;
       border-radius:18px;
-      background:rgba(20,14,10,0.28);
-      border:1px solid rgba(255,114,58,0.18);
-      box-shadow:0 12px 24px rgba(0,0,0,0.24);
-      backdrop-filter:blur(5px);
+      background:linear-gradient(180deg,rgba(24,17,12,0.52),rgba(17,12,9,0.38));
+      border:1px solid rgba(255,245,236,0.08);
+      box-shadow:0 14px 32px rgba(0,0,0,0.28);
+      backdrop-filter:blur(8px);
+    }
+    .compactControls{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:6px;
+      border-radius:999px;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.08);
     }
     .compactPill{
       padding:10px 14px;
       border-radius:999px;
-      background:rgba(255,255,255,0.10);
-      border:1px solid rgba(255,143,95,0.14);
+      background:rgba(255,255,255,0.08);
+      border:1px solid rgba(255,245,236,0.08);
       color:#fff0e5;
       font-size:13px;
       line-height:1;
       white-space:nowrap;
     }
+    .compactPill.emphasis{
+      padding:10px 16px;
+      background:linear-gradient(90deg,rgba(255,255,255,0.12),rgba(255,244,230,0.08));
+      border-color:rgba(255,245,236,0.14);
+      color:#fff8f2;
+      box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04);
+    }
     .compactMenuBtn,.compactPauseBtn{
       width:auto;
+      min-width:108px;
       padding:10px 18px;
       border:none;
       border-radius:999px;
@@ -324,26 +354,26 @@
       letter-spacing:.04em;
       text-transform:uppercase;
       cursor:pointer;
+      box-shadow:0 10px 22px rgba(119,37,9,0.20);
     }
     .compactPauseBtn{
       background:linear-gradient(90deg,#ff7b38,#ff5c29);
-    }
-    #help{
-      margin-top:14px;
-      color:#bfa99f;
-      font-size:13px;
-      line-height:1.5;
     }
     .gamePanel{
       position:relative;
       z-index:1;
       display:none;
+      flex:1;
+      min-height:0;
     }
     .tableStage{
       position:relative;
-      max-width:1040px;
+      width:100%;
+      max-width:1160px;
       margin:0 auto;
-      padding:22px 22px 28px;
+      height:100%;
+      min-height:0;
+      padding:8px 8px 12px;
       border-radius:28px;
       background:linear-gradient(180deg,rgba(22,16,11,0.10),rgba(18,14,11,0.18));
       box-shadow:0 28px 54px rgba(0,0,0,0.32);
@@ -362,13 +392,22 @@
     .canvasWrapper{
       position:relative;
       width:100%;
+      height:100%;
       border-radius:22px;
       overflow:hidden;
-      border:2px solid rgba(255,114,58,0.18);
+      border:1px solid rgba(255,245,236,0.10);
       box-shadow:0 18px 38px rgba(0,0,0,0.38);
       background:transparent;
     }
-    canvas{display:block;width:100%;height:auto;background:transparent;border-radius:22px}
+    canvas{
+      display:block;
+      width:100%;
+      height:100%;
+      max-height:calc(100svh - 170px);
+      aspect-ratio:840 / 520;
+      background:transparent;
+      border-radius:22px;
+    }
     .announcement{
       position:absolute;
       left:0;
@@ -429,6 +468,17 @@
     .btnPrimary{background:#ff6b2d;color:white;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
     .btnAlt{background:rgba(255,255,255,0.12);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
     #hsPanel{margin-top:10px;text-align:left;background:rgba(255,255,255,0.04);padding:10px;border-radius:10px;color:#dff6ff;max-height:260px;overflow:auto}
+    .rulesText{
+      color:#f3e2d5;
+      font-size:14px;
+      line-height:1.65;
+    }
+    .rulesText p{
+      margin:0 0 12px;
+    }
+    .rulesText p:last-child{
+      margin-bottom:0;
+    }
     .srOnly{
       position:absolute;
       width:1px;
@@ -442,7 +492,7 @@
     }
     #gameContainer.playing .homeMenu{display:none}
     #gameContainer.playing .compactBar{display:flex}
-    #gameContainer.playing .gamePanel{display:block}
+    #gameContainer.playing .gamePanel{display:flex}
     #gameContainer.playing{
       background:linear-gradient(180deg,rgba(16,12,10,0.06),rgba(15,11,9,0.12));
     }
@@ -464,18 +514,19 @@
     }
     @media (max-width:980px){
       .menuGrid{min-height:auto}
-      #gameContainer{min-height:auto}
       .startAction{width:100%}
       .homePanel{width:min(100%, 520px)}
     }
     @media (max-width:640px){
-      .pageShell{padding:18px 14px 24px}
-      #gameContainer{padding:22px 16px}
+      .pageShell{padding:12px}
+      #gameContainer{padding:14px}
       .menuTitle{font-size:38px}
       .menuAction{font-size:20px}
       .compactBar{gap:8px;padding:12px}
       .compactPill{font-size:12px}
-      .tableStage{padding:14px 14px 18px}
+      .homePanel{padding:18px 18px 16px}
+      .tableStage{padding:6px}
+      canvas{max-height:calc(100svh - 138px)}
     }
   </style>
 </head>
@@ -497,6 +548,7 @@
               <button id="startBtn" class="menuAction startAction" type="button">Jouer</button>
               <button id="highScoreToggle" class="menuAction scoreAction" type="button">High Score</button>
             </div>
+            <button id="rulesToggle" class="menuAction info" type="button">Règles</button>
             <button id="resumeGameBtn" class="menuAction resumeAction" type="button">Reprendre</button>
 
             <div class="sideCard">
@@ -530,27 +582,17 @@
               </div>
             </div>
 
-            <div class="sideCard">
-              <div class="controlGroup">
-                <label for="tableOpacity">Opacité de la table</label>
-                <input id="tableOpacity" type="range" min="0.05" max="0.95" step="0.05" value="0.40" />
-                <div id="opacityValue">40%</div>
-              </div>
-            </div>
-
           </div>
         </div>
       </div>
 
       <div id="compactBar" class="compactBar">
-        <button id="menuToggleBtn" class="compactMenuBtn" type="button">Menu</button>
-        <div id="scoreLabel" class="compactPill">Score — You: <span id="playerScoreText">0</span> / <span id="cpuScoreText">0</span></div>
-        <div id="compactMode" class="compactPill">Mode: Solo</div>
-        <div id="compactDifficulty" class="compactPill">Difficulté: Medium</div>
-        <div id="compactPoints" class="compactPill">11 points</div>
-        <div id="compactSpeed" class="compactPill">Vitesse: Normal</div>
-        <div id="compactHighScore" class="compactPill">High Score: 0</div>
-        <button id="pauseBtn" class="compactPauseBtn" type="button">Pause</button>
+        <div class="compactControls">
+          <button id="menuToggleBtn" class="compactMenuBtn" type="button">Menu</button>
+          <button id="pauseBtn" class="compactPauseBtn" type="button">Pause</button>
+        </div>
+        <div id="scoreLabel" class="compactPill emphasis">Score — You: <span id="playerScoreText">0</span> / <span id="cpuScoreText">0</span></div>
+        <div id="compactPoints" class="compactPill">Objectif: 3</div>
       </div>
 
       <div class="gamePanel" id="gamePanel">
@@ -563,8 +605,6 @@
             </div>
           </div>
         </div>
-
-        <div id="help">Power-ups: E = Expand (yellow), S = Slow (blue), A = Accelerate (red). Obstacle: vertical block in center reflects the ball.</div>
       </div>
       <div id="status" class="srOnly" aria-live="polite"></div>
     </div>
@@ -574,6 +614,18 @@
       <h2 class="modalTitle">High Score</h2>
       <div id="highScores"></div>
       <button id="closeHighScoreModal" class="modalClose" type="button">Fermer</button>
+    </div>
+  </div>
+  <div id="rulesModal" class="modalBackdrop" aria-hidden="true">
+    <div class="modalCard">
+      <h2 class="modalTitle">Règles du jeu</h2>
+      <div class="rulesText">
+        <p>Le but est d’envoyer la balle derrière la raquette adverse. Le premier joueur à atteindre le score cible gagne la partie.</p>
+        <p>En solo, vous jouez contre le CPU. En mode deux joueurs, P1 joue avec `W/S` et P2 avec `ArrowUp/ArrowDown`.</p>
+        <p>Bonus: `E` agrandit la raquette, `S` ralentit la balle, `A` accélère la balle. L’obstacle central renvoie aussi la balle.</p>
+        <p>Vous pouvez mettre en pause à tout moment avec le bouton `Pause` ou la touche `P`.</p>
+      </div>
+      <button id="closeRulesModal" class="modalClose" type="button">Fermer</button>
     </div>
   </div>
 
@@ -592,16 +644,13 @@ const resumeGameBtn = document.getElementById('resumeGameBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const menuToggleBtn = document.getElementById('menuToggleBtn');
 const highScoreToggleBtn = document.getElementById('highScoreToggle');
+const rulesToggleBtn = document.getElementById('rulesToggle');
 const highScoreModal = document.getElementById('highScoreModal');
 const closeHighScoreModalBtn = document.getElementById('closeHighScoreModal');
-const tableOpacityEl = document.getElementById('tableOpacity');
-const opacityValueEl = document.getElementById('opacityValue');
+const rulesModal = document.getElementById('rulesModal');
+const closeRulesModalBtn = document.getElementById('closeRulesModal');
 const hsWidget = document.getElementById('highScores');
-const compactModeEl = document.getElementById('compactMode');
-const compactDifficultyEl = document.getElementById('compactDifficulty');
 const compactPointsEl = document.getElementById('compactPoints');
-const compactSpeedEl = document.getElementById('compactSpeed');
-const compactHighScoreEl = document.getElementById('compactHighScore');
 const announcementEl = document.getElementById('announcement');
 const gameContainer = document.getElementById('gameContainer');
 
@@ -614,7 +663,7 @@ const overlayBox = document.getElementById('overlayBox');
 const paddleW = 12, paddleH = 110, paddleMargin = 14;
 
 let W = 840, H = 520;
-let tableAlpha = parseFloat(tableOpacityEl.value) || 0.4;
+let tableAlpha = 0.6;
 let ballSpeedMultiplier = parseFloat(ballSpeedEl.value) || 1.0;
 
 let player = { x: paddleMargin, y: (H - paddleH)/2, w: paddleW, h: paddleH, speed: 7, baseH: paddleH };
@@ -632,6 +681,7 @@ let running=false, paused=false, waitingAfterScore=false, waitUntil=0, gameOver=
 let lastHit = 'p1'; // who last hit the ball: 'p1' (left) or 'p2' (right)
 let menuOpenedBySystemPause = false;
 let announcementTimer = null;
+const EXPAND_DURATION_MS = 30000;
 
 let powerUp = { active:false, x:0, y:0, r:36, type:null, visibleUntil:0, vy:1.6, drift:0 };
 let nextPowerUpAt = 0;
@@ -742,6 +792,14 @@ function closeHighScoreModal(){
   highScoreModal.classList.remove('open');
   highScoreModal.setAttribute('aria-hidden', 'true');
 }
+function openRulesModal(){
+  rulesModal.classList.add('open');
+  rulesModal.setAttribute('aria-hidden', 'false');
+}
+function closeRulesModal(){
+  rulesModal.classList.remove('open');
+  rulesModal.setAttribute('aria-hidden', 'true');
+}
 function toggleMenuPanel(force){
   const willOpen = typeof force === 'boolean' ? force : !gameContainer.classList.contains('menuOpen');
   if(willOpen){
@@ -767,12 +825,7 @@ function getWinnerLabel(winner){
   return winner === 'p1' ? 'Vous avez gagne !' : 'CPU a gagne !';
 }
 function updateCompactSummary(){
-  compactModeEl.textContent = `Mode: ${gameModeEl.value === 'two' ? '2 joueurs' : 'Solo'}`;
-  compactDifficultyEl.textContent = `Difficulte: ${difficultyEl.options[difficultyEl.selectedIndex].text}`;
-  compactPointsEl.textContent = `${pointsToWinEl.value || 3} points`;
-  compactSpeedEl.textContent = `Vitesse: ${ballSpeedEl.options[ballSpeedEl.selectedIndex].text}`;
-  const stats = readHighScores();
-  compactHighScoreEl.textContent = `High Score joueur: ${stats.bestP || 0}`;
+  compactPointsEl.textContent = `Objectif: ${pointsToWinEl.value || 3}`;
 }
 
 /* High scores */
@@ -815,7 +868,7 @@ function resizeCanvas(){
 window.addEventListener('resize', resizeCanvas);
 
 /* Obstacles & power-ups */
-function initObstacles(){ obstacles = []; const w = 14; const h = Math.max(80, Math.round(H * 0.24)); const ox = Math.round(W/2 - w/2); const oy = Math.round((H - h) / 2); obstacles.push({ x:ox, y:oy, w:w, h:h, vy:1.6 }); }
+function initObstacles(){ obstacles = []; const w = 14; const h = Math.max(80, Math.round(H * 0.24)); const ox = Math.round(W/2 - w/2); const oy = Math.round((H - h) / 2); obstacles.push({ x:ox, y:oy, w:w, h:h, vy:2.3 }); }
 function updateObstacles(){ for(const ob of obstacles){ ob.y += ob.vy; if(ob.y < 10){ ob.y = 10; ob.vy = Math.abs(ob.vy); } if(ob.y + ob.h > H - 10){ ob.y = H - 10 - ob.h; ob.vy = -Math.abs(ob.vy); } if(ball.x + ball.r > ob.x && ball.x - ball.r < ob.x + ob.w && ball.y + ball.r > ob.y && ball.y - ball.r < ob.y + ob.h){ const obCenterY = ob.y + ob.h/2; const relative = (ball.y - obCenterY) / (ob.h/2); ball.vx = -ball.vx; ball.vy += relative * 2.0; if(ball.vx > 0) ball.x = ob.x + ob.w + ball.r + 1; else ball.x = ob.x - ball.r - 1; playPaddleSound(relative, 0.9); } } }
 
 function scheduleNextPowerUp(){ const now = performance.now(); nextPowerUpAt = now + 8000 + Math.random() * 12000; }
@@ -856,8 +909,8 @@ function applyPowerUpTo(owner, type){
   playPowerUpSound(type);
   const targetIsLeft = (owner === 'p1');
   if(type === 'expand'){
-    if(targetIsLeft){ player.h = Math.min(player.baseH * 1.8, player.baseH * 2.0); clampPaddle(player); setTimeout(()=>{ player.h = player.baseH; clampPaddle(player); }, 6000); }
-    else { cpu.h = Math.min(cpu.baseH * 1.8, cpu.baseH * 2.0); clampPaddle(cpu); setTimeout(()=>{ cpu.h = cpu.baseH; clampPaddle(cpu); }, 6000); }
+    if(targetIsLeft){ player.h = Math.min(player.baseH * 1.8, player.baseH * 2.0); clampPaddle(player); setTimeout(()=>{ player.h = player.baseH; clampPaddle(player); }, EXPAND_DURATION_MS); }
+    else { cpu.h = Math.min(cpu.baseH * 1.8, cpu.baseH * 2.0); clampPaddle(cpu); setTimeout(()=>{ cpu.h = cpu.baseH; clampPaddle(cpu); }, EXPAND_DURATION_MS); }
     statusEl.textContent = `${owner === 'p1' ? 'P1' : 'P2'} got Expand!`;
   } else if(type === 'slow'){
     const factor = 0.6; ball.vx *= factor; ball.vy *= factor;
@@ -884,6 +937,7 @@ function startGame(){
   ensureAudioContext();
   pointsToWin = Math.max(1, parseInt(pointsToWinEl.value,10) || 3);
   setPlayingUI(true);
+  pauseBtn.hidden = false;
   toggleMenuPanel(false);
   resizeCanvas();
   playerScore = 0; cpuScore = 0;
@@ -902,8 +956,11 @@ function startGame(){
 startBtn.addEventListener('click', startGame);
 resumeGameBtn.addEventListener('click', ()=>{ toggleMenuPanel(false); });
 highScoreToggleBtn.addEventListener('click', openHighScoreModal);
+rulesToggleBtn.addEventListener('click', openRulesModal);
 closeHighScoreModalBtn.addEventListener('click', closeHighScoreModal);
+closeRulesModalBtn.addEventListener('click', closeRulesModal);
 highScoreModal.addEventListener('click', (e)=>{ if(e.target === highScoreModal) closeHighScoreModal(); });
+rulesModal.addEventListener('click', (e)=>{ if(e.target === rulesModal) closeRulesModal(); });
 
 function togglePause(){ if(!running && !paused) return; paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; if(paused) showOverlay('pause'); else hideOverlay(); if(!paused) ensureAudioContext(); }
 pauseBtn.addEventListener('click', togglePause);
@@ -916,6 +973,7 @@ function toggleHSPanel(){ let hs = document.getElementById('hsPanel'); if(!hs) r
 function recordGame(winner){ const playerWon = (winner==='p1'); const s = readHighScores(); s.total = (s.total || 0) + 1; if(playerScore > (s.bestP||0)) s.bestP = playerScore; if(cpuScore > (s.bestC||0)) s.bestC = cpuScore; if(playerWon) s.wins = (s.wins||0) + 1; writeHighScores({bestP:s.bestP,bestC:s.bestC,wins:s.wins,total:s.total}); }
 function endGame(winner){
   gameOver=true; running=false; paused=false; waitingAfterScore=false; menuOpenedBySystemPause = false;
+  pauseBtn.hidden = true;
   playVictorySound();
   recordGame(winner);
   updateHighScoresDisplay();
@@ -1029,10 +1087,25 @@ function draw(){
   ctx.fillStyle = 'rgba(255,255,255,0.85)'; const dashH = 18, gapH = 12; for(let y=12;y<H-12;y+=dashH+gapH) ctx.fillRect(W/2 -1, y, 2, dashH);
   for(const ob of obstacles){ ctx.fillStyle = 'rgba(60,60,60,0.92)'; ctx.fillRect(ob.x, ob.y, ob.w, ob.h); }
   if(powerUp.active){
-    if(powerUp.type === 'expand') ctx.fillStyle = '#ffd24d';
-    else if(powerUp.type === 'slow') ctx.fillStyle = '#6fc3ff';
-    else if(powerUp.type === 'accelerate') ctx.fillStyle = '#ff6b6b';
-    else ctx.fillStyle = '#fff';
+    let bonusColor = '#fff';
+    let rippleRgb = '255,255,255';
+    if(powerUp.type === 'expand'){ bonusColor = '#ffd24d'; rippleRgb = '255,210,77'; }
+    else if(powerUp.type === 'slow'){ bonusColor = '#6fc3ff'; rippleRgb = '111,195,255'; }
+    else if(powerUp.type === 'accelerate'){ bonusColor = '#ff6b6b'; rippleRgb = '255,107,107'; }
+
+    const ripplePhase = (performance.now() % 1400) / 1400;
+    for(let i = 0; i < 3; i += 1){
+      const ringPhase = (ripplePhase + i / 3) % 1;
+      const ringRadius = powerUp.r + 10 + (ringPhase * 34);
+      const ringAlpha = 0.36 * (1 - ringPhase);
+      ctx.beginPath();
+      ctx.arc(powerUp.x, powerUp.y, ringRadius, 0, Math.PI * 2);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(${rippleRgb},${ringAlpha})`;
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = bonusColor;
     ctx.beginPath();
     ctx.arc(powerUp.x, powerUp.y, powerUp.r, 0, Math.PI*2);
     ctx.fill();
@@ -1069,13 +1142,12 @@ function updateScoreSpans(){
   updateCompactSummary();
 }
 
-tableOpacityEl.addEventListener('input', ()=>{ tableAlpha = parseFloat(tableOpacityEl.value); opacityValueEl.textContent = Math.round(tableAlpha*100)+'%'; });
 ballSpeedEl.addEventListener('change', ()=>{ ballSpeedMultiplier = parseFloat(ballSpeedEl.value) || 1.0; updateCompactSummary(); });
 difficultyEl.addEventListener('change', applyDifficulty);
 gameModeEl.addEventListener('change', ()=>{ applyDifficulty(); updateScoreLabel(); statusEl.textContent = gameModeEl.value === 'two' ? 'Mode deux joueurs.' : 'Mode solo.'; });
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
-window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; updateHighScoresDisplay(); opacityValueEl.textContent = Math.round(tableAlpha*100) + '%'; applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); setPlayingUI(false); });
+window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); setPlayingUI(false); pauseBtn.hidden = true; });
 
 window.togglePause = togglePause;
 

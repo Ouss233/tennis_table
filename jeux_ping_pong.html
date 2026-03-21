@@ -703,7 +703,7 @@
             <div class="sideCard">
               <div class="controlGroup">
                 <label for="serverUrl">Serveur WebSocket</label>
-                <input id="serverUrl" type="text" value="ws://localhost:8080" />
+                <input id="serverUrl" type="text" value="wss://tennis-table-ws.onrender.com" />
               </div>
             </div>
 
@@ -1110,7 +1110,7 @@ function startOnlineGame(){
   overlay.classList.remove('overlayVisible');
   updateScoreLabel();
 
-  const socket = new WebSocket(serverUrlEl.value.trim() || 'ws://localhost:8080');
+  const socket = new WebSocket(serverUrlEl.value.trim() || 'wss://tennis-table-ws.onrender.com');
   onlineState.socket = socket;
   onlineState.roomId = roomIdEl.value.trim() || 'public';
   const requestedName = playerNameEl.value.trim();

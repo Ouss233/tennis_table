@@ -130,6 +130,9 @@
       gap:8px;
       color:var(--text);
     }
+    .controlGroup.compactGroup{
+      gap:5px;
+    }
     label{
       font:700 14px/1 var(--title-font);
       letter-spacing:.06em;
@@ -147,6 +150,22 @@
       color:#fff4ea;
       background:rgba(255,255,255,0.06);
       border-radius:10px;
+    }
+    .sideCard.compactCard{
+      padding:9px 11px 10px;
+    }
+    .sideCard.compactCard label{
+      font-size:12px;
+    }
+    .sideCard.compactCard input[type="text"],
+    .sideCard.compactCard select,
+    .sideCard.compactCard input[type="number"]{
+      padding:8px 10px;
+      font-size:12px;
+      border-radius:9px;
+    }
+    .onlineOnly,.offlineOnly{
+      display:none;
     }
     input[type="range"]{
       accent-color:var(--accent-2);
@@ -573,10 +592,10 @@
       margin-bottom:0;
     }
     .inlineHint{
-      margin-top:6px;
+      margin-top:4px;
       color:#d9c8bc;
-      font-size:12px;
-      line-height:1.4;
+      font-size:11px;
+      line-height:1.3;
     }
     .srOnly{
       position:absolute;
@@ -685,7 +704,7 @@
               </div>
             </div>
 
-            <div class="sideCard">
+            <div class="sideCard onlineOnly compactCard">
               <div class="controlGroup">
                 <label for="playerName">Login joueur</label>
                 <input id="playerName" type="text" maxlength="24" value="Player 1" />
@@ -693,28 +712,29 @@
               </div>
             </div>
 
-            <div class="sideCard">
-              <div class="controlGroup">
+            <div class="sideCard onlineOnly compactCard">
+              <div class="controlGroup compactGroup">
                 <label for="roomId">Salle en ligne</label>
                 <input id="roomId" type="text" maxlength="24" value="public" />
+                <div class="inlineHint">Partagez exactement le meme code de salle entre les deux joueurs.</div>
               </div>
             </div>
 
-            <div class="sideCard">
-              <div class="controlGroup">
+            <div class="sideCard onlineOnly compactCard">
+              <div class="controlGroup compactGroup">
                 <label for="serverUrl">Serveur WebSocket</label>
                 <input id="serverUrl" type="text" value="wss://tennis-table-ws.onrender.com" />
               </div>
             </div>
 
-            <div class="sideCard">
+            <div class="sideCard offlineOnly">
               <div class="controlGroup">
                 <label for="difficulty">Difficulté</label>
                 <select id="difficulty"><option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option></select>
               </div>
             </div>
 
-            <div class="sideCard">
+            <div class="sideCard offlineOnly">
               <div class="controlGroup">
                 <label for="ballSpeed">Vitesse de balle</label>
                 <select id="ballSpeed"><option value="0.8">Slow</option><option value="1.0" selected>Normal</option><option value="1.25">Fast</option><option value="1.5">Very Fast</option></select>
@@ -1029,32 +1049,45 @@ function clearOnlineVisualState(){
   activeBonusEffects = [];
   renderActiveBonusEffects();
 }
+function setModeSpecificControls(){
+  const onlineMode = isOnlineMode();
+  document.querySelectorAll('.onlineOnly').forEach((element) => {
+    element.style.display = onlineMode ? 'block' : 'none';
+  });
+  document.querySelectorAll('.offlineOnly').forEach((element) => {
+    element.style.display = onlineMode ? 'none' : 'block';
+  });
+}
 function applyOnlineSnapshot(snapshot){
   if(!snapshot) return;
   onlineState.names = snapshot.names || onlineState.names;
   onlineState.waiting = !!snapshot.waitingForOpponent;
   pointsToWin = snapshot.pointsToWin || pointsToWin;
   pointsToWinEl.value = String(pointsToWin);
+  const fieldWidth = snapshot.field?.width || 840;
+  const fieldHeight = snapshot.field?.height || 520;
+  const scaleX = W / fieldWidth;
+  const scaleY = H / fieldHeight;
 
   playerScore = snapshot.score?.p1 ?? 0;
   cpuScore = snapshot.score?.p2 ?? 0;
 
-  player.x = snapshot.paddles?.p1?.x ?? player.x;
-  player.y = snapshot.paddles?.p1?.y ?? player.y;
-  player.w = snapshot.paddles?.p1?.w ?? player.w;
-  player.h = snapshot.paddles?.p1?.h ?? player.h;
+  player.x = snapshot.paddles?.p1?.x != null ? snapshot.paddles.p1.x * scaleX : player.x;
+  player.y = snapshot.paddles?.p1?.y != null ? snapshot.paddles.p1.y * scaleY : player.y;
+  player.w = snapshot.paddles?.p1?.w != null ? snapshot.paddles.p1.w * scaleX : player.w;
+  player.h = snapshot.paddles?.p1?.h != null ? snapshot.paddles.p1.h * scaleY : player.h;
 
-  cpu.x = snapshot.paddles?.p2?.x ?? cpu.x;
-  cpu.y = snapshot.paddles?.p2?.y ?? cpu.y;
-  cpu.w = snapshot.paddles?.p2?.w ?? cpu.w;
-  cpu.h = snapshot.paddles?.p2?.h ?? cpu.h;
+  cpu.x = snapshot.paddles?.p2?.x != null ? snapshot.paddles.p2.x * scaleX : cpu.x;
+  cpu.y = snapshot.paddles?.p2?.y != null ? snapshot.paddles.p2.y * scaleY : cpu.y;
+  cpu.w = snapshot.paddles?.p2?.w != null ? snapshot.paddles.p2.w * scaleX : cpu.w;
+  cpu.h = snapshot.paddles?.p2?.h != null ? snapshot.paddles.p2.h * scaleY : cpu.h;
 
   if(snapshot.ball){
-    ball.x = snapshot.ball.x;
-    ball.y = snapshot.ball.y;
-    ball.vx = snapshot.ball.vx;
-    ball.vy = snapshot.ball.vy;
-    ball.r = snapshot.ball.r;
+    ball.x = snapshot.ball.x * scaleX;
+    ball.y = snapshot.ball.y * scaleY;
+    ball.vx = snapshot.ball.vx * scaleX;
+    ball.vy = snapshot.ball.vy * scaleY;
+    ball.r = snapshot.ball.r * Math.min(scaleX, scaleY);
   }
 
   running = !!snapshot.running;
@@ -1911,6 +1944,7 @@ ballSpeedEl.addEventListener('change', ()=>{ ballSpeedMultiplier = parseFloat(ba
 difficultyEl.addEventListener('change', applyDifficulty);
 gameModeEl.addEventListener('change', ()=>{
   if(!isOnlineMode()) disconnectOnlineSession();
+  setModeSpecificControls();
   applyDifficulty();
   updateScoreLabel();
   updateBonusSideLabels();
@@ -1919,7 +1953,7 @@ gameModeEl.addEventListener('change', ()=>{
 });
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
-window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
+window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; setModeSpecificControls(); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
 
 window.togglePause = togglePause;
 

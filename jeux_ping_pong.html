@@ -136,11 +136,11 @@
       text-transform:uppercase;
       color:#f5eee8;
     }
-    select,input[type="number"],button,input[type="range"]{
+    select,input[type="number"],input[type="text"],button,input[type="range"]{
       width:100%;
       outline:none;
     }
-    select,input[type="number"]{
+    select,input[type="number"],input[type="text"]{
       padding:10px 12px;
       font-size:14px;
       border:1px solid rgba(255,245,236,0.12);
@@ -572,6 +572,12 @@
     .rulesText p:last-child{
       margin-bottom:0;
     }
+    .inlineHint{
+      margin-top:6px;
+      color:#d9c8bc;
+      font-size:12px;
+      line-height:1.4;
+    }
     .srOnly{
       position:absolute;
       width:1px;
@@ -674,7 +680,30 @@
                 <select id="gameMode">
                   <option value="single" selected>Single Player</option>
                   <option value="two">Two Players (W/S vs ArrowUp/Down)</option>
+                  <option value="online">Online (WebSocket)</option>
                 </select>
+              </div>
+            </div>
+
+            <div class="sideCard">
+              <div class="controlGroup">
+                <label for="playerName">Login joueur</label>
+                <input id="playerName" type="text" maxlength="24" value="Player 1" />
+                <div class="inlineHint">Nom par défaut: Player 1 / Player 2 selon la place attribuée.</div>
+              </div>
+            </div>
+
+            <div class="sideCard">
+              <div class="controlGroup">
+                <label for="roomId">Salle en ligne</label>
+                <input id="roomId" type="text" maxlength="24" value="public" />
+              </div>
+            </div>
+
+            <div class="sideCard">
+              <div class="controlGroup">
+                <label for="serverUrl">Serveur WebSocket</label>
+                <input id="serverUrl" type="text" value="ws://localhost:8080" />
               </div>
             </div>
 
@@ -767,6 +796,9 @@ const gameModeEl = document.getElementById('gameMode');
 const difficultyEl = document.getElementById('difficulty');
 const pointsToWinEl = document.getElementById('pointsToWin');
 const ballSpeedEl = document.getElementById('ballSpeed');
+const playerNameEl = document.getElementById('playerName');
+const roomIdEl = document.getElementById('roomId');
+const serverUrlEl = document.getElementById('serverUrl');
 const startBtn = document.getElementById('startBtn');
 const resumeGameBtn = document.getElementById('resumeGameBtn');
 const pauseBtn = document.getElementById('pauseBtn');
@@ -832,6 +864,17 @@ let obstacles = [];
 let cpuTargetY = H / 2;
 let cpuThinkAt = 0;
 let cpuWanderPhase = 0;
+
+const onlineState = {
+  socket: null,
+  connected: false,
+  role: null,
+  roomId: 'public',
+  playerName: 'Player 1',
+  names: { p1: 'Player 1', p2: 'Player 2' },
+  waiting: false,
+  lastWinner: null
+};
 
 const difficultySettings = {
   easy:{cpuSpeed:3.5,deadZone:38,reactMs:250,aimError:54},
@@ -959,11 +1002,168 @@ function toggleMenuPanel(force){
     }
   }
 }
+function isOnlineMode(){
+  return gameModeEl.value === 'online';
+}
+function getPlayerLabels(){
+  if(isOnlineMode()) return onlineState.names;
+  return gameModeEl.value === 'two'
+    ? { p1: 'Player 1', p2: 'Player 2' }
+    : { p1: 'Vous', p2: 'CPU' };
+}
+function disconnectOnlineSession(){
+  if(onlineState.socket){
+    try { onlineState.socket.close(); } catch {}
+  }
+  onlineState.socket = null;
+  onlineState.connected = false;
+  onlineState.role = null;
+  onlineState.waiting = false;
+  onlineState.names = { p1: 'Player 1', p2: 'Player 2' };
+  onlineState.lastWinner = null;
+}
+function clearOnlineVisualState(){
+  extraBalls = [];
+  clearPowerUps();
+  obstacles = [];
+  activeBonusEffects = [];
+  renderActiveBonusEffects();
+}
+function applyOnlineSnapshot(snapshot){
+  if(!snapshot) return;
+  onlineState.names = snapshot.names || onlineState.names;
+  onlineState.waiting = !!snapshot.waitingForOpponent;
+  pointsToWin = snapshot.pointsToWin || pointsToWin;
+  pointsToWinEl.value = String(pointsToWin);
+
+  playerScore = snapshot.score?.p1 ?? 0;
+  cpuScore = snapshot.score?.p2 ?? 0;
+
+  player.x = snapshot.paddles?.p1?.x ?? player.x;
+  player.y = snapshot.paddles?.p1?.y ?? player.y;
+  player.w = snapshot.paddles?.p1?.w ?? player.w;
+  player.h = snapshot.paddles?.p1?.h ?? player.h;
+
+  cpu.x = snapshot.paddles?.p2?.x ?? cpu.x;
+  cpu.y = snapshot.paddles?.p2?.y ?? cpu.y;
+  cpu.w = snapshot.paddles?.p2?.w ?? cpu.w;
+  cpu.h = snapshot.paddles?.p2?.h ?? cpu.h;
+
+  if(snapshot.ball){
+    ball.x = snapshot.ball.x;
+    ball.y = snapshot.ball.y;
+    ball.vx = snapshot.ball.vx;
+    ball.vy = snapshot.ball.vy;
+    ball.r = snapshot.ball.r;
+  }
+
+  running = !!snapshot.running;
+  if(snapshot.winner){
+    running = false;
+    gameOver = false;
+    if(onlineState.lastWinner !== snapshot.winner){
+      showAnnouncement(snapshot.names?.[snapshot.winner] || (snapshot.winner === 'p1' ? 'Player 1' : 'Player 2'), `Score final ${playerScore} - ${cpuScore}`, 'victory', 2200);
+    }
+    onlineState.lastWinner = snapshot.winner;
+    statusEl.textContent = `${snapshot.names?.[snapshot.winner] || snapshot.winner} a gagne.`;
+  } else if(snapshot.waitingForOpponent){
+    onlineState.lastWinner = null;
+    statusEl.textContent = 'En attente d’un autre joueur...';
+  } else {
+    onlineState.lastWinner = null;
+    statusEl.textContent = `${onlineState.names.p1} vs ${onlineState.names.p2}`;
+  }
+
+  updateScoreLabel();
+  updateBonusSideLabels();
+  updateCompactSummary();
+}
+function sendOnlineMessage(payload){
+  if(onlineState.socket && onlineState.socket.readyState === WebSocket.OPEN){
+    onlineState.socket.send(JSON.stringify(payload));
+  }
+}
+function sendOnlineInputState(){
+  if(!isOnlineMode() || !onlineState.connected) return;
+  sendOnlineMessage({
+    type: 'input',
+    up: getKey('w') || getKey('arrowup'),
+    down: getKey('s') || getKey('arrowdown')
+  });
+}
+function startOnlineGame(){
+  disconnectOnlineSession();
+  ensureAudioContext();
+  setPlayingUI(true);
+  pauseBtn.hidden = true;
+  toggleMenuPanel(false);
+  resizeCanvas();
+  resetTrails();
+  clearOnlineVisualState();
+  playerScore = 0;
+  cpuScore = 0;
+  running = false;
+  paused = false;
+  gameOver = false;
+  waitingAfterScore = false;
+  menuOpenedBySystemPause = false;
+  overlay.classList.remove('overlayVisible');
+  updateScoreLabel();
+
+  const socket = new WebSocket(serverUrlEl.value.trim() || 'ws://localhost:8080');
+  onlineState.socket = socket;
+  onlineState.roomId = roomIdEl.value.trim() || 'public';
+  const requestedName = playerNameEl.value.trim();
+  onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
+  onlineState.waiting = true;
+  statusEl.textContent = 'Connexion au serveur WebSocket...';
+
+  socket.addEventListener('open', () => {
+    onlineState.connected = true;
+    sendOnlineMessage({
+      type: 'join',
+      roomId: onlineState.roomId,
+      playerName: onlineState.playerName,
+      pointsToWin: Math.max(1, parseInt(pointsToWinEl.value, 10) || 3)
+    });
+  });
+
+  socket.addEventListener('message', (event) => {
+    const payload = JSON.parse(event.data);
+    if(payload.type === 'joined'){
+      onlineState.role = payload.role;
+      if((!playerNameEl.value.trim()) || playerNameEl.value.trim() === 'Player 1' || playerNameEl.value.trim() === 'Player 2'){
+        playerNameEl.value = payload.playerName;
+      }
+    } else if(payload.type === 'state'){
+      onlineState.role = payload.role || onlineState.role;
+      applyOnlineSnapshot(payload.state);
+    } else if(payload.type === 'message'){
+      statusEl.textContent = payload.text;
+    } else if(payload.type === 'error'){
+      statusEl.textContent = payload.message;
+    }
+  });
+
+  socket.addEventListener('close', () => {
+    if(isOnlineMode()){
+      onlineState.connected = false;
+      running = false;
+      statusEl.textContent = 'Connexion WebSocket fermee.';
+    }
+  });
+
+  socket.addEventListener('error', () => {
+    statusEl.textContent = 'Impossible de joindre le serveur WebSocket.';
+  });
+}
 function getPointLabel(winner){
+  if(isOnlineMode()) return `Point pour ${getPlayerLabels()[winner] || winner} !`;
   if(gameModeEl.value === 'two') return winner === 'p1' ? 'Point pour P1 !' : 'Point pour P2 !';
   return winner === 'p1' ? 'Point pour vous !' : 'Point pour CPU !';
 }
 function getWinnerLabel(winner){
+  if(isOnlineMode()) return `${getPlayerLabels()[winner] || winner} a gagne !`;
   if(gameModeEl.value === 'two') return winner === 'p1' ? 'P1 a gagne !' : 'P2 a gagne !';
   return winner === 'p1' ? 'Vous avez gagne !' : 'CPU a gagne !';
 }
@@ -980,6 +1180,7 @@ function getBonusLabel(type){
 }
 
 function getOwnerLabel(owner){
+  if(isOnlineMode()) return getPlayerLabels()[owner] || owner;
   if(gameModeEl.value === 'two') return owner === 'p1' ? 'P1' : 'P2';
   return owner === 'p1' ? 'Vous' : 'CPU';
 }
@@ -1103,8 +1304,9 @@ function drawBonusIconSvg(type, color = '#111'){
 }
 
 function updateBonusSideLabels(){
-  leftBonusLabelEl.textContent = gameModeEl.value === 'two' ? 'Joueur 1' : 'Joueur';
-  rightBonusLabelEl.textContent = gameModeEl.value === 'two' ? 'Joueur 2' : 'CPU';
+  const labels = getPlayerLabels();
+  leftBonusLabelEl.textContent = labels.p1;
+  rightBonusLabelEl.textContent = labels.p2;
 }
 
 function renderBonusEffectsInto(container, effects, now){
@@ -1151,11 +1353,13 @@ window.addEventListener('keydown', (e) => {
   if (k === 'arrowup' || k === 'arrowdown') e.preventDefault();
   setKey(k, true);
   if (k === 'p') togglePause();
+  sendOnlineInputState();
 });
 window.addEventListener('keyup', (e) => {
   const raw = e.key;
   const k = String(raw).toLowerCase();
   setKey(k, false);
+  sendOnlineInputState();
 });
 
 /* Resize canvas for crisp rendering */
@@ -1437,6 +1641,10 @@ function resetBall(towardsP2=true){
   waitingAfterScore = true; waitUntil = performance.now() + 700;
 }
 function startGame(){
+  if(isOnlineMode()){
+    startOnlineGame();
+    return;
+  }
   ensureAudioContext();
   pointsToWin = Math.max(1, parseInt(pointsToWinEl.value,10) || 3);
   setPlayingUI(true);
@@ -1470,7 +1678,7 @@ closeRulesModalBtn.addEventListener('click', closeRulesModal);
 highScoreModal.addEventListener('click', (e)=>{ if(e.target === highScoreModal) closeHighScoreModal(); });
 rulesModal.addEventListener('click', (e)=>{ if(e.target === rulesModal) closeRulesModal(); });
 
-function togglePause(){ if(!running && !paused) return; paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; if(paused) showOverlay('pause'); else hideOverlay(); if(!paused) ensureAudioContext(); }
+function togglePause(){ if(isOnlineMode()) return; if(!running && !paused) return; paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; if(paused) showOverlay('pause'); else hideOverlay(); if(!paused) ensureAudioContext(); }
 pauseBtn.addEventListener('click', togglePause);
 menuToggleBtn.addEventListener('click', ()=>{ toggleMenuPanel(); });
 
@@ -1493,6 +1701,13 @@ function endGame(winner){
 }
 
 function update(){
+  if(isOnlineMode()){
+    pushTrailPoint(player.trail, { y: player.y }, 5);
+    pushTrailPoint(cpu.trail, { y: cpu.y }, 5);
+    pushTrailPoint(ball.trail, { x: ball.x, y: ball.y }, 6);
+    sendOnlineInputState();
+    return;
+  }
   if(!running || paused || gameOver) return;
   if(waitingAfterScore && performance.now() < waitUntil) return;
   waitingAfterScore = false;
@@ -1674,7 +1889,10 @@ function draw(){
 function loop(){ update(); draw(); renderActiveBonusEffects(); requestAnimationFrame(loop); }
 
 function updateScoreLabel(){
-  if(gameModeEl.value === 'two'){
+  if(isOnlineMode()){
+    const labels = getPlayerLabels();
+    scoreLabel.innerHTML = `Score - ${labels.p1}: <span id="playerScoreText">${playerScore}</span> / ${labels.p2}: <span id="cpuScoreText">${cpuScore}</span>`;
+  } else if(gameModeEl.value === 'two'){
     scoreLabel.innerHTML = `Score - P1: <span id="playerScoreText">${playerScore}</span> / P2: <span id="cpuScoreText">${cpuScore}</span>`;
   } else {
     scoreLabel.innerHTML = `Score - Vous: <span id="playerScoreText">${playerScore}</span> / CPU: <span id="cpuScoreText">${cpuScore}</span>`;
@@ -1691,10 +1909,17 @@ function updateScoreSpans(){
 
 ballSpeedEl.addEventListener('change', ()=>{ ballSpeedMultiplier = parseFloat(ballSpeedEl.value) || 1.0; updateCompactSummary(); });
 difficultyEl.addEventListener('change', applyDifficulty);
-gameModeEl.addEventListener('change', ()=>{ applyDifficulty(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); statusEl.textContent = gameModeEl.value === 'two' ? 'Mode deux joueurs.' : 'Mode solo.'; });
+gameModeEl.addEventListener('change', ()=>{
+  if(!isOnlineMode()) disconnectOnlineSession();
+  applyDifficulty();
+  updateScoreLabel();
+  updateBonusSideLabels();
+  renderActiveBonusEffects();
+  statusEl.textContent = isOnlineMode() ? 'Mode en ligne WebSocket.' : (gameModeEl.value === 'two' ? 'Mode deux joueurs.' : 'Mode solo.');
+});
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
-window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; });
+window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
 
 window.togglePause = togglePause;
 

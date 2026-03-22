@@ -1470,7 +1470,6 @@ function connectOnlineLobby(){
       updateBonusSideLabels();
       renderActiveBonusEffects();
       updateLobbyControls();
-      closeOnlineLobbyModal();
       updateConnectionState('connected', payload.isHost ? `Etat: room ${payload.roomId} creee (hote)` : `Etat: room ${payload.roomId} rejointe`);
       statusEl.textContent = payload.isHost ? 'Room creee. Attendez un joueur puis lancez la partie.' : 'Room rejointe. En attente du lancement par l’hote.';
       if((!playerNameEl.value.trim()) || playerNameEl.value.trim() === 'Player 1' || playerNameEl.value.trim() === 'Player 2'){
@@ -1479,6 +1478,7 @@ function connectOnlineLobby(){
     } else if(payload.type === 'state'){
       onlineState.role = payload.role || onlineState.role;
       applyOnlineSnapshot(payload.state);
+      if(payload.state?.running || payload.state?.winner) closeOnlineLobbyModal();
     } else if(payload.type === 'message'){
       statusEl.textContent = payload.text;
     } else if(payload.type === 'error'){

@@ -1349,6 +1349,8 @@ function updateLobbyControls(){
 function applyLobbySnapshot(snapshot){
   onlineState.connectedUsers = snapshot.connectedUsers || [];
   onlineState.rooms = snapshot.rooms || [];
+  const currentRoom = onlineState.roomId ? onlineState.rooms.find((room) => room.id === onlineState.roomId) : null;
+  if(currentRoom) onlineState.waiting = currentRoom.count < 2;
   renderLobbyLists();
   updateLobbyControls();
 }
@@ -1458,6 +1460,7 @@ function connectOnlineLobby(){
       onlineState.roomId = payload.roomId;
       onlineState.inRoom = true;
       onlineState.isHost = !!payload.isHost;
+      onlineState.waiting = !!payload.waitingForOpponent;
       onlineState.names = payload.names || onlineState.names;
       setPlayingUI(false);
       pauseBtn.hidden = true;

@@ -232,7 +232,8 @@ function createRoomForClient(ws, payload) {
     roomId,
     isHost: true,
     playerName: client.name,
-    names: room.names
+    names: room.names,
+    waitingForOpponent: true
   });
   broadcastRoom(room);
   broadcastLobby();
@@ -268,7 +269,8 @@ function joinExistingRoom(ws, payload) {
     roomId,
     isHost: client.isHost,
     playerName: client.name,
-    names: room.names
+    names: room.names,
+    waitingForOpponent: roomPlayerCount(room) < 2
   });
   notifyRoom(room, 'Les deux joueurs sont dans la room. L’hote peut lancer la partie.');
   broadcastRoom(room);

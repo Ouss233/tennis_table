@@ -1899,7 +1899,7 @@ function resetBall(towardsP2=true){
 }
 function startGame(){
   if(isOnlineMode()){
-    startOnlineGame();
+    connectOnlineLobby();
     return;
   }
   ensureAudioContext();

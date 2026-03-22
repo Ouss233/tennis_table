@@ -675,6 +675,36 @@
       letter-spacing:.05em;
       text-transform:uppercase;
     }
+    .connectionState{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius:12px;
+      background:rgba(255,255,255,0.05);
+      border:1px solid rgba(255,245,236,0.08);
+      color:#f7e7db;
+    }
+    .connectionDot{
+      width:12px;
+      height:12px;
+      border-radius:50%;
+      background:#c46a46;
+      box-shadow:0 0 0 4px rgba(196,106,70,0.16);
+      flex:0 0 auto;
+    }
+    .connectionDot.connected{
+      background:#3ccf7a;
+      box-shadow:0 0 0 4px rgba(60,207,122,0.18);
+    }
+    .connectionDot.connecting{
+      background:#f0b44a;
+      box-shadow:0 0 0 4px rgba(240,180,74,0.16);
+    }
+    .connectionText{
+      font-size:12px;
+      line-height:1.4;
+    }
     .playerBannerBar{
       display:none;
       width:100%;
@@ -968,6 +998,10 @@
     <div class="modalCard lobbyModalCard">
       <h2 class="modalTitle">Lobby Online</h2>
       <p class="lobbyIntro">Connectez-vous, creez ou rejoignez une room, puis laissez le createur lancer la partie.</p>
+      <div class="connectionState">
+        <div id="connectionDot" class="connectionDot"></div>
+        <div id="connectionText" class="connectionText">Etat: non connecte</div>
+      </div>
       <div id="onlineLobbyBody" class="lobbyPanelBody"></div>
       <button id="closeOnlineLobbyModal" class="modalClose" type="button">Fermer</button>
     </div>
@@ -1007,6 +1041,8 @@ const closeRulesModalBtn = document.getElementById('closeRulesModal');
 const onlineLobbyModal = document.getElementById('onlineLobbyModal');
 const closeOnlineLobbyModalBtn = document.getElementById('closeOnlineLobbyModal');
 const onlineLobbyBodyEl = document.getElementById('onlineLobbyBody');
+const connectionDotEl = document.getElementById('connectionDot');
+const connectionTextEl = document.getElementById('connectionText');
 const hsWidget = document.getElementById('highScores');
 const compactPointsEl = document.getElementById('compactPoints');
 const announcementEl = document.getElementById('announcement');
@@ -1202,6 +1238,12 @@ function mountOnlineControlsIntoLobby(){
     onlineLobbyBodyEl.appendChild(element);
   });
 }
+function updateConnectionState(state, text){
+  connectionDotEl.classList.remove('connected', 'connecting');
+  if(state === 'connected') connectionDotEl.classList.add('connected');
+  if(state === 'connecting') connectionDotEl.classList.add('connecting');
+  connectionTextEl.textContent = text;
+}
 function toggleMenuPanel(force){
   const willOpen = typeof force === 'boolean' ? force : !gameContainer.classList.contains('menuOpen');
   if(willOpen){
@@ -1245,6 +1287,7 @@ function disconnectOnlineSession(){
   onlineState.rooms = [];
   renderLobbyLists();
   updateLobbyControls();
+  updateConnectionState('idle', 'Etat: non connecte');
 }
 function clearOnlineVisualState(){
   extraBalls = [];
@@ -1391,9 +1434,11 @@ function connectOnlineLobby(){
   onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
   onlineState.waiting = true;
   statusEl.textContent = 'Connexion au serveur WebSocket...';
+  updateConnectionState('connecting', 'Etat: connexion en cours...');
 
   socket.addEventListener('open', () => {
     onlineState.connected = true;
+    updateConnectionState('connected', 'Etat: connecte au serveur');
     sendOnlineMessage({
       type: 'hello',
       playerName: onlineState.playerName
@@ -1426,6 +1471,7 @@ function connectOnlineLobby(){
       renderActiveBonusEffects();
       updateLobbyControls();
       closeOnlineLobbyModal();
+      updateConnectionState('connected', payload.isHost ? `Etat: room ${payload.roomId} creee (hote)` : `Etat: room ${payload.roomId} rejointe`);
       statusEl.textContent = payload.isHost ? 'Room creee. Attendez un joueur puis lancez la partie.' : 'Room rejointe. En attente du lancement par l’hote.';
       if((!playerNameEl.value.trim()) || playerNameEl.value.trim() === 'Player 1' || playerNameEl.value.trim() === 'Player 2'){
         playerNameEl.value = payload.playerName;
@@ -1447,11 +1493,13 @@ function connectOnlineLobby(){
       running = false;
       statusEl.textContent = 'Connexion WebSocket fermee.';
       updateLobbyControls();
+      updateConnectionState('idle', 'Etat: connexion fermee');
     }
   });
 
   socket.addEventListener('error', () => {
     statusEl.textContent = 'Impossible de joindre le serveur WebSocket.';
+    updateConnectionState('idle', 'Etat: erreur de connexion');
   });
 }
 function getPointLabel(winner){
@@ -2247,7 +2295,7 @@ gameModeEl.addEventListener('change', ()=>{
 });
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
-window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
+window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateConnectionState('idle', 'Etat: non connecte'); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
 
 window.togglePause = togglePause;
 

@@ -400,7 +400,8 @@ wss.on('connection', (ws) => {
 
     if (payload.type === 'hello') {
       assignClientName(ws, payload.playerName);
-      send(ws, { type: 'hello_ack', clientId: client.id, playerName: clients.get(ws)?.name });
+      const currentClient = clients.get(ws);
+      send(ws, { type: 'hello_ack', clientId: currentClient?.id, playerName: currentClient?.name });
       broadcastLobby();
       return;
     }

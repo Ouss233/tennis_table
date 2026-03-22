@@ -661,6 +661,14 @@
       color:#f8e8dc;
       font-size:12px;
     }
+    .lobbyItem.joinable{
+      cursor:pointer;
+      transition:transform .16s ease, background .16s ease;
+    }
+    .lobbyItem.joinable:hover{
+      background:rgba(255,255,255,0.08);
+      transform:translateY(-1px);
+    }
     .lobbyItem strong{
       font:700 12px/1 var(--title-font);
       letter-spacing:.04em;
@@ -1332,8 +1340,16 @@ function renderLobbyLists(){
   } else {
     for(const room of onlineState.rooms){
       const item = document.createElement('div');
-      item.className = 'lobbyItem';
+      item.className = `lobbyItem${room.count < 2 ? ' joinable' : ''}`;
       item.innerHTML = `<strong>${room.id}</strong><span class="lobbyBadge">${room.count}/2</span>`;
+      if(room.count < 2){
+        item.addEventListener('click', ()=>{
+          roomIdEl.value = room.id;
+          if(!onlineState.inRoom){
+            joinRoomBtn.click();
+          }
+        });
+      }
       roomsListEl.appendChild(item);
     }
   }
@@ -1342,7 +1358,7 @@ function updateLobbyControls(){
   const onlineMode = isOnlineMode();
   connectOnlineBtn.disabled = !onlineMode || onlineState.connected;
   createRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
-  joinRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
+  joinRoomBtn.disabled = !onlineMode || !onlineState.connected;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
   startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
 }
@@ -2032,6 +2048,14 @@ createRoomBtn.addEventListener('click', ()=>{
 });
 joinRoomBtn.addEventListener('click', ()=>{
   if(!onlineState.connected) return;
+  if(onlineState.inRoom){
+    statusEl.textContent = 'Vous etes deja dans une room.';
+    return;
+  }
+  if(!roomIdEl.value.trim()){
+    statusEl.textContent = 'Entrez ou selectionnez un code de room.';
+    return;
+  }
   const requestedName = playerNameEl.value.trim();
   sendOnlineMessage({
     type: 'join_room',

@@ -322,6 +322,22 @@
       text-transform:uppercase;
       cursor:pointer;
     }
+    .lobbyModalCard{
+      width:min(100%, 560px);
+      max-height:min(84vh, 820px);
+      overflow:auto;
+    }
+    .lobbyPanelBody{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .lobbyIntro{
+      color:#f3e2d5;
+      font-size:13px;
+      line-height:1.5;
+      margin:0 0 12px;
+    }
     .compactBar{
       display:none;
       position:relative;
@@ -948,6 +964,14 @@
       <button id="closeRulesModal" class="modalClose" type="button">Fermer</button>
     </div>
   </div>
+  <div id="onlineLobbyModal" class="modalBackdrop" aria-hidden="true">
+    <div class="modalCard lobbyModalCard">
+      <h2 class="modalTitle">Lobby Online</h2>
+      <p class="lobbyIntro">Connectez-vous, creez ou rejoignez une room, puis laissez le createur lancer la partie.</p>
+      <div id="onlineLobbyBody" class="lobbyPanelBody"></div>
+      <button id="closeOnlineLobbyModal" class="modalClose" type="button">Fermer</button>
+    </div>
+  </div>
 
   <script>
 /* Two-player mode with fixed key normalization so Arrow keys work */
@@ -980,6 +1004,9 @@ const highScoreModal = document.getElementById('highScoreModal');
 const closeHighScoreModalBtn = document.getElementById('closeHighScoreModal');
 const rulesModal = document.getElementById('rulesModal');
 const closeRulesModalBtn = document.getElementById('closeRulesModal');
+const onlineLobbyModal = document.getElementById('onlineLobbyModal');
+const closeOnlineLobbyModalBtn = document.getElementById('closeOnlineLobbyModal');
+const onlineLobbyBodyEl = document.getElementById('onlineLobbyBody');
 const hsWidget = document.getElementById('highScores');
 const compactPointsEl = document.getElementById('compactPoints');
 const announcementEl = document.getElementById('announcement');
@@ -1162,6 +1189,19 @@ function closeRulesModal(){
   rulesModal.classList.remove('open');
   rulesModal.setAttribute('aria-hidden', 'true');
 }
+function openOnlineLobbyModal(){
+  onlineLobbyModal.classList.add('open');
+  onlineLobbyModal.setAttribute('aria-hidden', 'false');
+}
+function closeOnlineLobbyModal(){
+  onlineLobbyModal.classList.remove('open');
+  onlineLobbyModal.setAttribute('aria-hidden', 'true');
+}
+function mountOnlineControlsIntoLobby(){
+  document.querySelectorAll('.onlineOnly').forEach((element) => {
+    onlineLobbyBodyEl.appendChild(element);
+  });
+}
 function toggleMenuPanel(force){
   const willOpen = typeof force === 'boolean' ? force : !gameContainer.classList.contains('menuOpen');
   if(willOpen){
@@ -1261,7 +1301,7 @@ function updateLobbyControls(){
   createRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
   joinRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
-  startBtn.textContent = onlineMode ? 'Entrer lobby' : 'Jouer';
+  startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
 }
 function applyLobbySnapshot(snapshot){
   onlineState.connectedUsers = snapshot.connectedUsers || [];
@@ -1385,6 +1425,7 @@ function connectOnlineLobby(){
       updateBonusSideLabels();
       renderActiveBonusEffects();
       updateLobbyControls();
+      closeOnlineLobbyModal();
       statusEl.textContent = payload.isHost ? 'Room creee. Attendez un joueur puis lancez la partie.' : 'Room rejointe. En attente du lancement par l’hote.';
       if((!playerNameEl.value.trim()) || playerNameEl.value.trim() === 'Player 1' || playerNameEl.value.trim() === 'Player 2'){
         playerNameEl.value = payload.playerName;
@@ -1899,7 +1940,7 @@ function resetBall(towardsP2=true){
 }
 function startGame(){
   if(isOnlineMode()){
-    connectOnlineLobby();
+    openOnlineLobbyModal();
     return;
   }
   ensureAudioContext();
@@ -1959,8 +2000,10 @@ highScoreToggleBtn.addEventListener('click', openHighScoreModal);
 rulesToggleBtn.addEventListener('click', openRulesModal);
 closeHighScoreModalBtn.addEventListener('click', closeHighScoreModal);
 closeRulesModalBtn.addEventListener('click', closeRulesModal);
+closeOnlineLobbyModalBtn.addEventListener('click', closeOnlineLobbyModal);
 highScoreModal.addEventListener('click', (e)=>{ if(e.target === highScoreModal) closeHighScoreModal(); });
 rulesModal.addEventListener('click', (e)=>{ if(e.target === rulesModal) closeRulesModal(); });
+onlineLobbyModal.addEventListener('click', (e)=>{ if(e.target === onlineLobbyModal) closeOnlineLobbyModal(); });
 
 function togglePause(){ if(isOnlineMode()) return; if(!running && !paused) return; paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; if(paused) showOverlay('pause'); else hideOverlay(); if(!paused) ensureAudioContext(); }
 pauseBtn.addEventListener('click', togglePause);
@@ -2204,7 +2247,7 @@ gameModeEl.addEventListener('change', ()=>{
 });
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
-window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; setModeSpecificControls(); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
+window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
 
 window.togglePause = togglePause;
 

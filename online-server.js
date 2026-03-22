@@ -11,6 +11,7 @@ const MAX_SCORE_DEFAULT = 3;
 
 const rooms = new Map();
 const clients = new Map();
+let nextClientId = 1;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -31,6 +32,7 @@ function createBall(direction = 1) {
 function createRoom(id) {
   return {
     id,
+    hostId: null,
     players: { p1: null, p2: null },
     inputs: {
       p1: { up: false, down: false },
@@ -56,6 +58,36 @@ function getOrCreateRoom(roomId) {
 
 function roomPlayerCount(room) {
   return (room.players.p1 ? 1 : 0) + (room.players.p2 ? 1 : 0);
+}
+
+function getClientMeta(ws) {
+  return clients.get(ws) || null;
+}
+
+function getConnectedUsersSnapshot() {
+  return Array.from(clients.values()).map((client) => ({
+    id: client.id,
+    name: client.name,
+    status: client.roomId ? `room ${client.roomId}` : 'lobby'
+  }));
+}
+
+function getRoomsSnapshot() {
+  return Array.from(rooms.values()).map((room) => ({
+    id: room.id,
+    count: roomPlayerCount(room),
+    hostName: room.hostId ? Array.from(clients.values()).find((client) => client.id === room.hostId)?.name || 'Host' : 'Host',
+    running: room.running
+  }));
+}
+
+function broadcastLobby() {
+  const payload = {
+    type: 'lobby',
+    connectedUsers: getConnectedUsersSnapshot(),
+    rooms: getRoomsSnapshot()
+  };
+  for (const ws of clients.keys()) send(ws, payload);
 }
 
 function resetRoomState(room, serveDirection = 1) {
@@ -96,7 +128,8 @@ function serializeRoom(room) {
     running: room.running,
     winner: room.winner,
     waitingForOpponent: roomPlayerCount(room) < 2,
-    pointsToWin: room.pointsToWin
+    pointsToWin: room.pointsToWin,
+    hostId: room.hostId
   };
 }
 
@@ -120,66 +153,155 @@ function notifyRoom(room, text) {
   }
 }
 
-function joinRoom(ws, payload) {
-  const roomId = String(payload.roomId || 'public').trim() || 'public';
-  const room = getOrCreateRoom(roomId);
-
-  let role = null;
-  if (!room.players.p1) role = 'p1';
-  else if (!room.players.p2) role = 'p2';
-  else {
-    send(ws, { type: 'error', message: 'Cette salle est deja complete.' });
+function leaveCurrentRoom(ws) {
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room) {
+    client.roomId = null;
+    client.role = null;
+    client.isHost = false;
     return;
   }
 
-  clients.set(ws, { roomId, role });
-  room.players[role] = ws;
-
-  const fallbackName = role === 'p1' ? 'Player 1' : 'Player 2';
-  const providedName = String(payload.playerName || '').trim();
-  room.names[role] = providedName || fallbackName;
-  room.pointsToWin = clamp(parseInt(payload.pointsToWin || MAX_SCORE_DEFAULT, 10) || MAX_SCORE_DEFAULT, 1, 15);
-
-  if (roomPlayerCount(room) === 2) {
-    resetRoomState(room, Math.random() > 0.5 ? 1 : -1);
-    notifyRoom(room, 'Les deux joueurs sont connectes. La partie commence.');
-  } else {
-    room.running = false;
+  const role = client.role;
+  if (role) {
+    room.players[role] = null;
+    room.inputs[role] = { up: false, down: false };
+    room.names[role] = role === 'p1' ? 'Player 1' : 'Player 2';
   }
 
+  room.running = false;
+  room.winner = null;
+
+  if (room.hostId === client.id) {
+    const successorRole = room.players.p1 ? 'p1' : room.players.p2 ? 'p2' : null;
+    if (successorRole) {
+      const successorMeta = getClientMeta(room.players[successorRole]);
+      room.hostId = successorMeta?.id || null;
+      if (successorMeta) successorMeta.isHost = true;
+    } else {
+      room.hostId = null;
+    }
+  }
+
+  if (roomPlayerCount(room) === 0) {
+    rooms.delete(room.id);
+  } else {
+    notifyRoom(room, 'Un joueur a quitte la room.');
+    broadcastRoom(room);
+  }
+
+  client.roomId = null;
+  client.role = null;
+  client.isHost = false;
+  broadcastLobby();
+}
+
+function assignClientName(ws, requestedName, fallbackName = null) {
+  const client = getClientMeta(ws);
+  if (!client) return;
+  const cleanName = String(requestedName || '').trim();
+  client.name = cleanName || fallbackName || client.name || `Player ${client.id}`;
+}
+
+function createRoomForClient(ws, payload) {
+  const client = getClientMeta(ws);
+  if (!client) return;
+  leaveCurrentRoom(ws);
+  const roomId = String(payload.roomId || '').trim() || `room-${client.id}`;
+  if (rooms.has(roomId)) {
+    send(ws, { type: 'error', message: 'Cette room existe deja.' });
+    return;
+  }
+  assignClientName(ws, payload.playerName, 'Player 1');
+  const room = createRoom(roomId);
+  room.hostId = client.id;
+  room.players.p1 = ws;
+  room.names.p1 = client.name;
+  room.pointsToWin = clamp(parseInt(payload.pointsToWin || MAX_SCORE_DEFAULT, 10) || MAX_SCORE_DEFAULT, 1, 15);
+  rooms.set(roomId, room);
+
+  client.roomId = roomId;
+  client.role = 'p1';
+  client.isHost = true;
+
   send(ws, {
-    type: 'joined',
+    type: 'room_joined',
+    role: 'p1',
+    roomId,
+    isHost: true,
+    playerName: client.name,
+    names: room.names
+  });
+  broadcastRoom(room);
+  broadcastLobby();
+}
+
+function joinExistingRoom(ws, payload) {
+  const client = getClientMeta(ws);
+  if (!client) return;
+  leaveCurrentRoom(ws);
+  const roomId = String(payload.roomId || '').trim();
+  const room = rooms.get(roomId);
+  if (!room) {
+    send(ws, { type: 'error', message: 'Room introuvable.' });
+    return;
+  }
+  if (roomPlayerCount(room) >= 2) {
+    send(ws, { type: 'error', message: 'Cette room est deja complete.' });
+    return;
+  }
+
+  assignClientName(ws, payload.playerName, 'Player 2');
+  const role = room.players.p1 ? 'p2' : 'p1';
+  room.players[role] = ws;
+  room.names[role] = client.name;
+
+  client.roomId = roomId;
+  client.role = role;
+  client.isHost = room.hostId === client.id;
+
+  send(ws, {
+    type: 'room_joined',
     role,
     roomId,
-    playerName: room.names[role]
+    isHost: client.isHost,
+    playerName: client.name,
+    names: room.names
   });
+  notifyRoom(room, 'Les deux joueurs sont dans la room. L’hote peut lancer la partie.');
+  broadcastRoom(room);
+  broadcastLobby();
+}
+
+function startRoomGame(ws, payload) {
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room) return;
+  if (room.hostId !== client.id) {
+    send(ws, { type: 'error', message: 'Seul le createur de la room peut lancer la partie.' });
+    return;
+  }
+  if (roomPlayerCount(room) < 2) {
+    send(ws, { type: 'error', message: 'Il faut 2 joueurs pour lancer la partie.' });
+    return;
+  }
+  room.score.p1 = 0;
+  room.score.p2 = 0;
+  room.pointsToWin = clamp(parseInt(payload.pointsToWin || MAX_SCORE_DEFAULT, 10) || MAX_SCORE_DEFAULT, 1, 15);
+  resetRoomState(room, Math.random() > 0.5 ? 1 : -1);
+  notifyRoom(room, 'La partie commence.');
   broadcastRoom(room);
 }
 
 function leaveRoom(ws) {
   const client = clients.get(ws);
   if (!client) return;
-  const room = rooms.get(client.roomId);
-  if (!room) {
-    clients.delete(ws);
-    return;
-  }
-
-  room.players[client.role] = null;
-  room.inputs[client.role] = { up: false, down: false };
-  room.names[client.role] = client.role === 'p1' ? 'Player 1' : 'Player 2';
-  room.running = false;
-  room.winner = null;
-
-  const remainingRole = room.players.p1 ? 'p1' : room.players.p2 ? 'p2' : null;
-  if (remainingRole) {
-    notifyRoom(room, 'L’autre joueur a quitte la partie.');
-    broadcastRoom(room);
-  } else {
-    rooms.delete(room.id);
-  }
-
+  leaveCurrentRoom(ws);
   clients.delete(ws);
+  broadcastLobby();
 }
 
 function updatePaddle(paddle, input) {
@@ -255,7 +377,17 @@ function tickRoom(room) {
 const wss = new WebSocketServer({ port: PORT });
 
 wss.on('connection', (ws) => {
+  const client = {
+    id: nextClientId,
+    name: `Player ${nextClientId}`,
+    roomId: null,
+    role: null,
+    isHost: false
+  };
+  nextClientId += 1;
+  clients.set(ws, client);
   send(ws, { type: 'welcome', message: 'Connexion etablie.' });
+  broadcastLobby();
 
   ws.on('message', (buffer) => {
     let payload;
@@ -266,8 +398,25 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    if (payload.type === 'join') {
-      joinRoom(ws, payload);
+    if (payload.type === 'hello') {
+      assignClientName(ws, payload.playerName);
+      send(ws, { type: 'hello_ack', clientId: client.id, playerName: clients.get(ws)?.name });
+      broadcastLobby();
+      return;
+    }
+
+    if (payload.type === 'create_room') {
+      createRoomForClient(ws, payload);
+      return;
+    }
+
+    if (payload.type === 'join_room') {
+      joinExistingRoom(ws, payload);
+      return;
+    }
+
+    if (payload.type === 'start_game') {
+      startRoomGame(ws, payload);
       return;
     }
 
@@ -285,12 +434,6 @@ wss.on('connection', (ws) => {
         down: !!payload.down
       };
       return;
-    }
-
-    if (payload.type === 'restart') {
-      restartRoom(room, payload.pointsToWin);
-      notifyRoom(room, 'Nouvelle manche.');
-      broadcastRoom(room);
     }
   });
 

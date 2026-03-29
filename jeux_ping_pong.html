@@ -1089,6 +1089,8 @@ function setKey(k, val){ keys[k] = val; }
 function getKey(k){ return !!keys[k]; }
 
 let running=false, paused=false, waitingAfterScore=false, waitUntil=0, gameOver=false;
+const SERVE_DELAY_MS = 950;
+const SERVE_SPEED_FACTOR = 0.76;
 let lastHit = 'p1'; // who last hit the ball: 'p1' (left) or 'p2' (right)
 let menuOpenedBySystemPause = false;
 let announcementTimer = null;
@@ -1576,6 +1578,9 @@ function applyOnlineSnapshot(snapshot){
   } else if(snapshot.waitingForOpponent){
     onlineState.lastWinner = null;
     statusEl.textContent = 'En attente d’un autre joueur...';
+  } else if(snapshot.waitingForServe){
+    onlineState.lastWinner = null;
+    statusEl.textContent = `Service dans ${Math.max(1, Math.ceil((snapshot.serveCountdownMs || 0) / 1000))}...`;
   } else {
     onlineState.lastWinner = null;
     statusEl.textContent = `${onlineState.names.p1} vs ${onlineState.names.p2}`;
@@ -2165,18 +2170,19 @@ function drawBallTrail(activeBall){
   }
 }
 
-function resetBall(towardsP2=true){
+function resetBall(towardsP2=true, { delayMs = SERVE_DELAY_MS, speedFactor = SERVE_SPEED_FACTOR, announce = true } = {}){
   resetAllBonusEffects();
   duplicatePowerUpSpawned = false;
   extraBalls = [];
   resetTrails();
   ball.x = W/2; ball.y = H/2;
   const base = 6; const angle = (Math.random() * Math.PI/4) - (Math.PI/8);
-  ball.vx = (towardsP2 ? 1 : -1) * base * ballSpeedMultiplier * Math.cos(angle);
-  ball.vy = base * ballSpeedMultiplier * Math.sin(angle);
+  ball.vx = (towardsP2 ? 1 : -1) * base * ballSpeedMultiplier * speedFactor * Math.cos(angle);
+  ball.vy = base * ballSpeedMultiplier * speedFactor * Math.sin(angle);
   clearPowerUps();
   scheduleNextPowerUp();
-  waitingAfterScore = true; waitUntil = performance.now() + 700;
+  waitingAfterScore = true; waitUntil = performance.now() + delayMs;
+  if(announce) statusEl.textContent = `Service dans ${Math.max(1, Math.ceil(delayMs / 1000))}...`;
 }
 function startGame(){
   if(isOnlineMode()){
@@ -2201,11 +2207,12 @@ function startGame(){
   lastHit = 'p1'; gameOver=false; running = true; paused=false; menuOpenedBySystemPause = false; overlay.classList.remove('overlayVisible');
   resetAllBonusEffects();
   pauseBtn.textContent = 'Pause';
-  applyDifficulty(); resetBall(true); clearPowerUps(); initObstacles();
+  applyDifficulty(); resetBall(true, { delayMs: 1100, speedFactor: 0.72, announce: false }); clearPowerUps(); initObstacles();
   updateScoreLabel();
   updateHighScoresDisplay();
   renderActiveBonusEffects();
-  statusEl.textContent = `Partie lancee, objectif ${pointsToWin} points.`;
+  showAnnouncement('Ready ?', `Objectif ${pointsToWin} points`, 'point', 1100);
+  statusEl.textContent = `Service dans ${Math.max(1, Math.ceil(1100 / 1000))}...`;
 }
 startBtn.addEventListener('click', startGame);
 connectOnlineBtn.addEventListener('click', connectOnlineLobby);

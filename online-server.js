@@ -12,6 +12,8 @@ const MAX_SCORE_DEFAULT = 3;
 const BONUS_EFFECT_DURATION_MS = 15000;
 const POWER_UP_VISIBLE_DURATION_MS = 30000;
 const MAX_POWER_UPS_ON_TABLE = 2;
+const SERVE_SPEED_FACTOR = 0.76;
+const SERVE_DELAY_MS = 950;
 
 const rooms = new Map();
 const clients = new Map();
@@ -21,15 +23,15 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function createBall(direction = 1) {
+function createBall(direction = 1, speedFactor = 1) {
   const baseSpeed = 6;
   const angle = (Math.random() * Math.PI / 4) - (Math.PI / 8);
   return {
     x: FIELD_WIDTH / 2,
     y: FIELD_HEIGHT / 2,
     r: 9,
-    vx: direction * baseSpeed * Math.cos(angle),
-    vy: baseSpeed * Math.sin(angle)
+    vx: direction * baseSpeed * speedFactor * Math.cos(angle),
+    vy: baseSpeed * speedFactor * Math.sin(angle)
   };
 }
 
@@ -84,6 +86,8 @@ function createRoom(id) {
     nextPowerUpAt: scheduleNextPowerUpAt(),
     duplicateSpawnedThisPoint: false,
     lastHit: 'p1',
+    waitingForServe: true,
+    serveResumeAt: Date.now() + SERVE_DELAY_MS,
     running: false,
     winner: null,
     pointsToWin: MAX_SCORE_DEFAULT
@@ -129,20 +133,22 @@ function broadcastLobby() {
   for (const ws of clients.keys()) send(ws, payload);
 }
 
-function resetRoomState(room, serveDirection = 1) {
+function resetRoomState(room, serveDirection = 1, { delayMs = SERVE_DELAY_MS, speedFactor = SERVE_SPEED_FACTOR } = {}) {
   room.paddles.p1.y = (FIELD_HEIGHT - room.paddles.p1.h) / 2;
   room.paddles.p2.y = (FIELD_HEIGHT - room.paddles.p2.h) / 2;
   room.paddles.p1.h = room.paddles.p1.baseH;
   room.paddles.p2.h = room.paddles.p2.baseH;
   room.paddles.p1.speed = room.paddles.p1.baseSpeed;
   room.paddles.p2.speed = room.paddles.p2.baseSpeed;
-  room.balls = [createBall(serveDirection)];
+  room.balls = [createBall(serveDirection, speedFactor)];
   room.obstacle = createObstacle();
   room.powerUps = [];
   room.activeEffects = [];
   room.nextPowerUpAt = scheduleNextPowerUpAt();
   room.duplicateSpawnedThisPoint = false;
   room.lastHit = 'p1';
+  room.waitingForServe = true;
+  room.serveResumeAt = Date.now() + delayMs;
   room.winner = null;
   room.running = roomPlayerCount(room) === 2;
 }
@@ -184,6 +190,8 @@ function serializeRoom(room) {
       durationMs: effect.durationMs,
       remainingMs: Math.max(0, effect.expiresAt - now)
     })),
+    waitingForServe: !!room.waitingForServe,
+    serveCountdownMs: Math.max(0, (room.serveResumeAt || 0) - now),
     running: room.running,
     winner: room.winner,
     waitingForOpponent: roomPlayerCount(room) < 2,
@@ -603,6 +611,11 @@ function tickRoom(room) {
   applyActiveEffects(room);
   updatePaddle(room.paddles.p1, room.inputs.p1);
   updatePaddle(room.paddles.p2, room.inputs.p2);
+
+  if (room.waitingForServe) {
+    if (Date.now() < room.serveResumeAt) return;
+    room.waitingForServe = false;
+  }
 
   for (const ball of room.balls) {
     ball.x += ball.vx;

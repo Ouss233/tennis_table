@@ -14,6 +14,10 @@ async function getTestState(page) {
   return page.evaluate(() => window.__pongTestApi.getState());
 }
 
+async function getBackgroundStyle(page) {
+  return page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage);
+}
+
 test.describe('Online Lobby', () => {
   test('connects to the local websocket lobby', async ({ page }) => {
     await openOnlineLobby(page, 'Player Alpha');
@@ -22,6 +26,39 @@ test.describe('Online Lobby', () => {
 
     await expect(page.locator('#connectionText')).toContainText('connecte au serveur');
     await expect(page.locator('#connectedUsersList')).toContainText('Player Alpha');
+  });
+
+  test('keeps the illustrated background in online mode before and after game start', async ({ browser }) => {
+    const roomId = `bg-${Date.now()}`;
+    const contextOne = await browser.newContext();
+    const contextTwo = await browser.newContext();
+    const hostPage = await contextOne.newPage();
+    const guestPage = await contextTwo.newPage();
+
+    await openOnlineLobby(hostPage, 'Background Host');
+    expect(await getBackgroundStyle(hostPage)).toContain('tabletennis43.jpg');
+    await hostPage.locator('#roomId').fill(roomId);
+    await hostPage.locator('#connectOnlineBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText('connecte au serveur');
+    await hostPage.locator('#createRoomBtn').click();
+
+    await openOnlineLobby(guestPage, 'Background Guest');
+    expect(await getBackgroundStyle(guestPage)).toContain('tabletennis43.jpg');
+    await guestPage.locator('#connectOnlineBtn').click();
+    await expect(guestPage.locator('#roomsList')).toContainText(roomId);
+    await guestPage.locator('#roomId').fill(roomId);
+    await guestPage.locator('#joinRoomBtn').click();
+
+    await expect(hostPage.locator('#startRoomBtn')).toBeEnabled();
+    await hostPage.locator('#startRoomBtn').click();
+
+    await expect(hostPage.locator('#gameContainer')).toHaveClass(/playing/);
+    await expect(guestPage.locator('#gameContainer')).toHaveClass(/playing/);
+    expect(await getBackgroundStyle(hostPage)).toContain('tabletennis43.jpg');
+    expect(await getBackgroundStyle(guestPage)).toContain('tabletennis43.jpg');
+
+    await contextOne.close();
+    await contextTwo.close();
   });
 
   test('creates a room, joins with a second player, and starts the game', async ({ browser }) => {

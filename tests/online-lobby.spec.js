@@ -10,6 +10,10 @@ async function openOnlineLobby(page, playerName) {
   await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
 }
 
+async function getTestState(page) {
+  return page.evaluate(() => window.__pongTestApi.getState());
+}
+
 test.describe('Online Lobby', () => {
   test('connects to the local websocket lobby', async ({ page }) => {
     await openOnlineLobby(page, 'Player Alpha');
@@ -52,6 +56,53 @@ test.describe('Online Lobby', () => {
     await expect(hostPage.locator('#rightPlayerBanner')).toContainText('Guest Player');
     await expect(guestPage.locator('#leftPlayerBanner')).toContainText('Host Player');
     await expect(guestPage.locator('#rightPlayerBanner')).toContainText('Guest Player');
+
+    await expect.poll(async () => (await getTestState(hostPage)).obstacleCount).toBe(1);
+    await expect.poll(async () => (await getTestState(guestPage)).obstacleCount).toBe(1);
+
+    const initialHostState = await getTestState(hostPage);
+    const initialGuestState = await getTestState(guestPage);
+
+    await hostPage.locator('#game').click();
+    await hostPage.keyboard.down('w');
+    await hostPage.waitForTimeout(350);
+    await hostPage.keyboard.up('w');
+
+    await expect.poll(async () => (await getTestState(hostPage)).playerY).not.toBe(initialHostState.playerY);
+    await expect.poll(async () => (await getTestState(guestPage)).playerY).not.toBe(initialGuestState.playerY);
+
+    await expect.poll(async () => (await getTestState(hostPage)).powerUpCount, { timeout: 9000 }).toBeGreaterThan(0);
+    await expect.poll(async () => (await getTestState(guestPage)).powerUpCount, { timeout: 9000 }).toBeGreaterThan(0);
+
+    await contextOne.close();
+    await contextTwo.close();
+  });
+
+  test('selecting an available room does not auto-join it', async ({ browser }) => {
+    const roomId = `sel-${Date.now()}`;
+    const contextOne = await browser.newContext();
+    const contextTwo = await browser.newContext();
+    const hostPage = await contextOne.newPage();
+    const guestPage = await contextTwo.newPage();
+
+    await openOnlineLobby(hostPage, 'Select Host');
+    await hostPage.locator('#roomId').fill(roomId);
+    await hostPage.locator('#connectOnlineBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText('connecte au serveur');
+    await hostPage.locator('#createRoomBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText(`room ${roomId} creee`);
+
+    await openOnlineLobby(guestPage, 'Select Guest');
+    await guestPage.locator('#connectOnlineBtn').click();
+    await expect(guestPage.locator('#roomsList')).toContainText(roomId);
+
+    await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
+    await expect(guestPage.locator('#roomId')).toHaveValue(roomId);
+    await expect(guestPage.locator('#joinRoomBtn')).toBeEnabled();
+    await expect(guestPage.locator('#connectionText')).toContainText('connecte au serveur');
+
+    const guestState = await getTestState(guestPage);
+    expect(guestState.inRoom).toBe(false);
 
     await contextOne.close();
     await contextTwo.close();

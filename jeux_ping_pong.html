@@ -1601,7 +1601,7 @@ function sendOnlineInputState(){
     onlineState.lastInputPayload &&
     onlineState.lastInputPayload.up === input.up &&
     onlineState.lastInputPayload.down === input.down &&
-    (now - onlineState.lastInputSentAt) < 120
+    (now - onlineState.lastInputSentAt) < 80
   ){
     return;
   }
@@ -2500,6 +2500,34 @@ gameModeEl.addEventListener('change', ()=>{
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
 window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateConnectionState('idle', 'Etat: non connecte'); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
+
+window.__pongTestApi = {
+  getState(){
+    return {
+      mode: gameModeEl.value,
+      playing: gameContainer.classList.contains('playing'),
+      menuOpen: gameContainer.classList.contains('menuOpen'),
+      running,
+      paused,
+      connected: onlineState.connected,
+      inRoom: onlineState.inRoom,
+      waiting: onlineState.waiting,
+      role: onlineState.role,
+      roomId: onlineState.roomId,
+      obstacleCount: obstacles.length,
+      powerUpCount: powerUps.length,
+      activeBonusCount: activeBonusEffects.length,
+      ballCount: getAllBalls().length,
+      playerY: player.y,
+      cpuY: cpu.y,
+      scoreText: scoreLabel.textContent || '',
+      statusText: statusEl.textContent || '',
+      connectionText: connectionTextEl.textContent || '',
+      leftBanner: leftPlayerBannerEl.textContent || '',
+      rightBanner: rightPlayerBannerEl.textContent || ''
+    };
+  }
+};
 
 window.togglePause = togglePause;
 

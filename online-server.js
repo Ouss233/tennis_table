@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const TICK_MS = 1000 / 60;
-const SNAPSHOT_MS = 1000 / 30;
+const SNAPSHOT_MS = 1000 / 45;
 const PADDLE_WIDTH = 12;
 const PADDLE_HEIGHT = 110;
 const PADDLE_MARGIN = 14;

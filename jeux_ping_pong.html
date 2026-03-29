@@ -1389,6 +1389,22 @@ function getCurrentOnlineInput(){
     down: getKey('s') || getKey('arrowdown')
   };
 }
+function syncOnlineExtraBalls(ballsSnapshot, scaleX, scaleY){
+  const extraSnapshots = ballsSnapshot.slice(1);
+  const nextExtraBalls = [];
+  for(let index = 0; index < extraSnapshots.length; index += 1){
+    const source = extraSnapshots[index];
+    const existing = extraBalls[index] || createBallState();
+    existing.x = source.x * scaleX;
+    existing.y = source.y * scaleY;
+    existing.vx = source.vx * scaleX;
+    existing.vy = source.vy * scaleY;
+    existing.r = source.r * Math.min(scaleX, scaleY);
+    existing.trail = existing.trail || [];
+    nextExtraBalls.push(existing);
+  }
+  extraBalls = nextExtraBalls;
+}
 function reconcileOnlinePaddle(paddle, target, blend = 0.22){
   if(!target) return;
   paddle.x = target.x;
@@ -1494,12 +1510,13 @@ function applyOnlineSnapshot(snapshot){
   }
 
   if(snapshot.ball){
+    const primaryBall = Array.isArray(snapshot.balls) && snapshot.balls.length ? snapshot.balls[0] : snapshot.ball;
     onlineState.targets.ball = {
-      x: snapshot.ball.x * scaleX,
-      y: snapshot.ball.y * scaleY,
-      vx: snapshot.ball.vx * scaleX,
-      vy: snapshot.ball.vy * scaleY,
-      r: snapshot.ball.r * Math.min(scaleX, scaleY)
+      x: primaryBall.x * scaleX,
+      y: primaryBall.y * scaleY,
+      vx: primaryBall.vx * scaleX,
+      vy: primaryBall.vy * scaleY,
+      r: primaryBall.r * Math.min(scaleX, scaleY)
     };
     if(!onlineState.lastFrameAt){
       ball.x = onlineState.targets.ball.x;
@@ -1509,6 +1526,39 @@ function applyOnlineSnapshot(snapshot){
       ball.r = onlineState.targets.ball.r;
     }
   }
+  if(Array.isArray(snapshot.balls)){
+    syncOnlineExtraBalls(snapshot.balls, scaleX, scaleY);
+  } else {
+    extraBalls = [];
+  }
+  obstacles = Array.isArray(snapshot.obstacles)
+    ? snapshot.obstacles.map((obstacle) => ({
+        x: obstacle.x * scaleX,
+        y: obstacle.y * scaleY,
+        w: obstacle.w * scaleX,
+        h: obstacle.h * scaleY,
+        vy: obstacle.vy * scaleY
+      }))
+    : [];
+  powerUps = Array.isArray(snapshot.powerUps)
+    ? snapshot.powerUps.map((powerUp) => ({
+        x: powerUp.x * scaleX,
+        y: powerUp.y * scaleY,
+        r: powerUp.r * Math.min(scaleX, scaleY),
+        type: powerUp.type,
+        visibleUntil: performance.now() + 120,
+        vy: powerUp.vy * scaleY,
+        drift: powerUp.drift || 0
+      }))
+    : [];
+  activeBonusEffects = Array.isArray(snapshot.activeEffects)
+    ? snapshot.activeEffects.map((effect) => ({
+        owner: effect.owner,
+        type: effect.type,
+        durationMs: effect.durationMs || BONUS_EFFECT_DURATION_MS,
+        expiresAt: performance.now() + Math.max(0, effect.remainingMs || 0)
+      }))
+    : [];
 
   running = !!snapshot.running;
   setPlayingUI(!!snapshot.running || !!snapshot.winner);
@@ -1534,6 +1584,7 @@ function applyOnlineSnapshot(snapshot){
   updateScoreLabel();
   updateBonusSideLabels();
   updatePlayerBanners();
+  renderActiveBonusEffects();
   updateCompactSummary();
   updateLobbyControls();
 }
@@ -2229,6 +2280,9 @@ function update(){
     pushTrailPoint(player.trail, { y: player.y }, 5);
     pushTrailPoint(cpu.trail, { y: cpu.y }, 5);
     pushTrailPoint(ball.trail, { x: ball.x, y: ball.y }, 6);
+    for(const extraBall of extraBalls){
+      pushTrailPoint(extraBall.trail, { x: extraBall.x, y: extraBall.y }, 6);
+    }
     updateOnlineFrame();
     sendOnlineInputState();
     return;

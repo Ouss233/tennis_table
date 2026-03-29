@@ -2,12 +2,16 @@ import { WebSocketServer } from 'ws';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const TICK_MS = 1000 / 60;
+const SNAPSHOT_MS = 1000 / 30;
 const PADDLE_WIDTH = 12;
 const PADDLE_HEIGHT = 110;
 const PADDLE_MARGIN = 14;
 const FIELD_WIDTH = 840;
 const FIELD_HEIGHT = 520;
 const MAX_SCORE_DEFAULT = 3;
+const BONUS_EFFECT_DURATION_MS = 15000;
+const POWER_UP_VISIBLE_DURATION_MS = 30000;
+const MAX_POWER_UPS_ON_TABLE = 2;
 
 const rooms = new Map();
 const clients = new Map();
@@ -29,6 +33,35 @@ function createBall(direction = 1) {
   };
 }
 
+function createObstacle() {
+  const width = 14;
+  const height = Math.max(80, Math.round(FIELD_HEIGHT * 0.24));
+  return {
+    x: Math.round(FIELD_WIDTH / 2 - width / 2),
+    y: Math.round((FIELD_HEIGHT - height) / 2),
+    w: width,
+    h: height,
+    vy: 2.3
+  };
+}
+
+function scheduleNextPowerUpAt() {
+  return Date.now() + 3000 + Math.random() * 4000;
+}
+
+function createPowerUp(type) {
+  const margin = 96;
+  return {
+    x: margin + Math.random() * (FIELD_WIDTH - (2 * margin)),
+    y: 72 + Math.random() * (FIELD_HEIGHT - 144),
+    r: 23,
+    type,
+    visibleUntil: Date.now() + POWER_UP_VISIBLE_DURATION_MS,
+    vy: (Math.random() > 0.5 ? 1 : -1) * (1.2 + Math.random() * 1.4),
+    drift: Math.random() * Math.PI * 2
+  };
+}
+
 function createRoom(id) {
   return {
     id,
@@ -40,11 +73,17 @@ function createRoom(id) {
     },
     names: { p1: 'Player 1', p2: 'Player 2' },
     paddles: {
-      p1: { x: PADDLE_MARGIN, y: (FIELD_HEIGHT - PADDLE_HEIGHT) / 2, w: PADDLE_WIDTH, h: PADDLE_HEIGHT, speed: 8 },
-      p2: { x: FIELD_WIDTH - PADDLE_WIDTH - PADDLE_MARGIN, y: (FIELD_HEIGHT - PADDLE_HEIGHT) / 2, w: PADDLE_WIDTH, h: PADDLE_HEIGHT, speed: 8 }
+      p1: { x: PADDLE_MARGIN, y: (FIELD_HEIGHT - PADDLE_HEIGHT) / 2, w: PADDLE_WIDTH, h: PADDLE_HEIGHT, speed: 8, baseH: PADDLE_HEIGHT, baseSpeed: 8 },
+      p2: { x: FIELD_WIDTH - PADDLE_WIDTH - PADDLE_MARGIN, y: (FIELD_HEIGHT - PADDLE_HEIGHT) / 2, w: PADDLE_WIDTH, h: PADDLE_HEIGHT, speed: 8, baseH: PADDLE_HEIGHT, baseSpeed: 8 }
     },
-    ball: createBall(1),
+    balls: [createBall(1)],
     score: { p1: 0, p2: 0 },
+    obstacle: createObstacle(),
+    powerUps: [],
+    activeEffects: [],
+    nextPowerUpAt: scheduleNextPowerUpAt(),
+    duplicateSpawnedThisPoint: false,
+    lastHit: 'p1',
     running: false,
     winner: null,
     pointsToWin: MAX_SCORE_DEFAULT
@@ -93,7 +132,17 @@ function broadcastLobby() {
 function resetRoomState(room, serveDirection = 1) {
   room.paddles.p1.y = (FIELD_HEIGHT - room.paddles.p1.h) / 2;
   room.paddles.p2.y = (FIELD_HEIGHT - room.paddles.p2.h) / 2;
-  room.ball = createBall(serveDirection);
+  room.paddles.p1.h = room.paddles.p1.baseH;
+  room.paddles.p2.h = room.paddles.p2.baseH;
+  room.paddles.p1.speed = room.paddles.p1.baseSpeed;
+  room.paddles.p2.speed = room.paddles.p2.baseSpeed;
+  room.balls = [createBall(serveDirection)];
+  room.obstacle = createObstacle();
+  room.powerUps = [];
+  room.activeEffects = [];
+  room.nextPowerUpAt = scheduleNextPowerUpAt();
+  room.duplicateSpawnedThisPoint = false;
+  room.lastHit = 'p1';
   room.winner = null;
   room.running = roomPlayerCount(room) === 2;
 }
@@ -118,13 +167,23 @@ function send(ws, payload) {
 }
 
 function serializeRoom(room) {
+  const now = Date.now();
   return {
     roomId: room.id,
     field: { width: FIELD_WIDTH, height: FIELD_HEIGHT },
     score: room.score,
     names: room.names,
     paddles: room.paddles,
-    ball: room.ball,
+    ball: room.balls[0] || null,
+    balls: room.balls,
+    obstacles: room.obstacle ? [room.obstacle] : [],
+    powerUps: room.powerUps,
+    activeEffects: room.activeEffects.map((effect) => ({
+      owner: effect.owner,
+      type: effect.type,
+      durationMs: effect.durationMs,
+      remainingMs: Math.max(0, effect.expiresAt - now)
+    })),
     running: room.running,
     winner: room.winner,
     waitingForOpponent: roomPlayerCount(room) < 2,
@@ -312,6 +371,208 @@ function updatePaddle(paddle, input) {
   paddle.y = clamp(paddle.y, 0, FIELD_HEIGHT - paddle.h);
 }
 
+function applyActiveEffects(room) {
+  const now = Date.now();
+  room.activeEffects = room.activeEffects.filter((effect) => effect.expiresAt > now);
+
+  for (const role of ['p1', 'p2']) {
+    const paddle = room.paddles[role];
+    paddle.h = paddle.baseH;
+    paddle.speed = paddle.baseSpeed;
+  }
+
+  for (const effect of room.activeEffects) {
+    const paddle = room.paddles[effect.owner];
+    if (!paddle) continue;
+    if (effect.type === 'expand') {
+      paddle.h = Math.min(paddle.baseH * 1.8, paddle.baseH * 2.0);
+    } else if (effect.type === 'shrink') {
+      paddle.h = Math.max(paddle.baseH * 0.55, paddle.baseH * 0.6);
+    } else if (effect.type === 'paddleSpeed') {
+      paddle.speed = paddle.baseSpeed * 1.65;
+    }
+    paddle.y = clamp(paddle.y, 0, FIELD_HEIGHT - paddle.h);
+  }
+}
+
+function registerEffect(room, owner, type, durationMs) {
+  room.activeEffects = room.activeEffects.filter((effect) => !(effect.owner === owner && effect.type === type));
+  room.activeEffects.push({
+    owner,
+    type,
+    durationMs,
+    expiresAt: Date.now() + durationMs
+  });
+}
+
+function resolveBallCollisions(room) {
+  for (let i = 0; i < room.balls.length; i += 1) {
+    for (let j = i + 1; j < room.balls.length; j += 1) {
+      const firstBall = room.balls[i];
+      const secondBall = room.balls[j];
+      const dx = secondBall.x - firstBall.x;
+      const dy = secondBall.y - firstBall.y;
+      const distance = Math.hypot(dx, dy);
+      const minDistance = firstBall.r + secondBall.r;
+      if (distance === 0 || distance >= minDistance) continue;
+
+      const nx = dx / distance;
+      const ny = dy / distance;
+      const overlap = minDistance - distance;
+
+      firstBall.x -= nx * overlap * 0.5;
+      firstBall.y -= ny * overlap * 0.5;
+      secondBall.x += nx * overlap * 0.5;
+      secondBall.y += ny * overlap * 0.5;
+
+      const relativeVx = secondBall.vx - firstBall.vx;
+      const relativeVy = secondBall.vy - firstBall.vy;
+      const approachSpeed = (relativeVx * nx) + (relativeVy * ny);
+      if (approachSpeed >= 0) continue;
+
+      const tangentX = -ny;
+      const tangentY = nx;
+      const firstNormal = (firstBall.vx * nx) + (firstBall.vy * ny);
+      const firstTangent = (firstBall.vx * tangentX) + (firstBall.vy * tangentY);
+      const secondNormal = (secondBall.vx * nx) + (secondBall.vy * ny);
+      const secondTangent = (secondBall.vx * tangentX) + (secondBall.vy * tangentY);
+
+      const restitution = 1.02;
+      const exchangedFirstNormal = secondNormal * restitution;
+      const exchangedSecondNormal = firstNormal * restitution;
+
+      firstBall.vx = (exchangedFirstNormal * nx) + (firstTangent * tangentX);
+      firstBall.vy = (exchangedFirstNormal * ny) + (firstTangent * tangentY);
+      secondBall.vx = (exchangedSecondNormal * nx) + (secondTangent * tangentX);
+      secondBall.vy = (exchangedSecondNormal * ny) + (secondTangent * tangentY);
+
+      const minSpeed = 4.5;
+      const firstSpeed = Math.hypot(firstBall.vx, firstBall.vy);
+      const secondSpeed = Math.hypot(secondBall.vx, secondBall.vy);
+      if (firstSpeed < minSpeed) {
+        const ratio = minSpeed / Math.max(0.001, firstSpeed);
+        firstBall.vx *= ratio;
+        firstBall.vy *= ratio;
+      }
+      if (secondSpeed < minSpeed) {
+        const ratio = minSpeed / Math.max(0.001, secondSpeed);
+        secondBall.vx *= ratio;
+        secondBall.vy *= ratio;
+      }
+    }
+  }
+}
+
+function updateObstacle(room) {
+  if (!room.obstacle) return;
+  const obstacle = room.obstacle;
+  obstacle.y += obstacle.vy;
+  if (obstacle.y < 10) {
+    obstacle.y = 10;
+    obstacle.vy = Math.abs(obstacle.vy);
+  }
+  if (obstacle.y + obstacle.h > FIELD_HEIGHT - 10) {
+    obstacle.y = FIELD_HEIGHT - 10 - obstacle.h;
+    obstacle.vy = -Math.abs(obstacle.vy);
+  }
+
+  for (const activeBall of room.balls) {
+    if (
+      activeBall.x + activeBall.r > obstacle.x &&
+      activeBall.x - activeBall.r < obstacle.x + obstacle.w &&
+      activeBall.y + activeBall.r > obstacle.y &&
+      activeBall.y - activeBall.r < obstacle.y + obstacle.h
+    ) {
+      const obstacleCenterY = obstacle.y + (obstacle.h / 2);
+      const relative = (activeBall.y - obstacleCenterY) / (obstacle.h / 2);
+      activeBall.vx = -activeBall.vx;
+      activeBall.vy += relative * 2.0;
+      if (activeBall.vx > 0) activeBall.x = obstacle.x + obstacle.w + activeBall.r + 1;
+      else activeBall.x = obstacle.x - activeBall.r - 1;
+    }
+  }
+}
+
+function getAvailablePowerTypes(room) {
+  const spawnableTypes = ['expand', 'shrink', 'paddleSpeed'];
+  if (!room.duplicateSpawnedThisPoint) spawnableTypes.push('duplicate');
+  return spawnableTypes.filter((type) => !room.powerUps.some((powerUp) => powerUp.type === type));
+}
+
+function spawnPowerUp(room) {
+  if (room.powerUps.length >= MAX_POWER_UPS_ON_TABLE) return;
+  const availableTypes = getAvailablePowerTypes(room);
+  if (!availableTypes.length) return;
+  const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+  const powerUp = createPowerUp(type);
+  room.powerUps.push(powerUp);
+  if (type === 'duplicate') room.duplicateSpawnedThisPoint = true;
+}
+
+function applyPowerUp(room, owner, type, sourceBall) {
+  if (type === 'expand' || type === 'shrink' || type === 'paddleSpeed') {
+    registerEffect(room, owner, type, BONUS_EFFECT_DURATION_MS);
+    return;
+  }
+
+  if (type === 'duplicate' && room.balls.length === 1) {
+    const speed = Math.max(6, Math.hypot(sourceBall.vx, sourceBall.vy));
+    const horizontalSign = Math.sign(sourceBall.vx) || 1;
+    const verticalSign = sourceBall.vy === 0 ? (Math.random() > 0.5 ? 1 : -1) : Math.sign(sourceBall.vy);
+    const splitAngle = Math.PI / 6;
+    const leadVx = horizontalSign * Math.cos(splitAngle) * speed;
+    const leadVy = verticalSign * Math.sin(splitAngle) * speed;
+
+    sourceBall.vx = leadVx;
+    sourceBall.vy = leadVy;
+    sourceBall.x += horizontalSign * 12;
+    sourceBall.y += verticalSign * 18;
+
+    room.balls.push({
+      ...createBall(1),
+      x: sourceBall.x - (horizontalSign * 24),
+      y: sourceBall.y - (verticalSign * 36),
+      vx: -leadVx,
+      vy: -leadVy,
+      r: sourceBall.r
+    });
+  }
+}
+
+function updatePowerUps(room) {
+  const now = Date.now();
+  if (room.powerUps.length < MAX_POWER_UPS_ON_TABLE && now > room.nextPowerUpAt) {
+    spawnPowerUp(room);
+    room.nextPowerUpAt = scheduleNextPowerUpAt();
+  }
+
+  room.powerUps = room.powerUps.filter((powerUp) => {
+    powerUp.y += powerUp.vy;
+    powerUp.drift += 0.03;
+    powerUp.x += Math.sin(powerUp.drift) * 0.75;
+    if (powerUp.y - powerUp.r < 24) {
+      powerUp.y = 24 + powerUp.r;
+      powerUp.vy = Math.abs(powerUp.vy);
+    }
+    if (powerUp.y + powerUp.r > FIELD_HEIGHT - 24) {
+      powerUp.y = FIELD_HEIGHT - 24 - powerUp.r;
+      powerUp.vy = -Math.abs(powerUp.vy);
+    }
+    if (now > powerUp.visibleUntil) return false;
+
+    for (const activeBall of room.balls) {
+      const dx = activeBall.x - powerUp.x;
+      const dy = activeBall.y - powerUp.y;
+      if (Math.hypot(dx, dy) <= activeBall.r + powerUp.r) {
+        applyPowerUp(room, room.lastHit, powerUp.type, activeBall);
+        room.nextPowerUpAt = scheduleNextPowerUpAt();
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 function handlePaddleBounce(ball, paddle, direction) {
   if (direction < 0 && ball.vx >= 0) return false;
   if (direction > 0 && ball.vx <= 0) return false;
@@ -339,39 +600,45 @@ function handlePaddleBounce(ball, paddle, direction) {
 function tickRoom(room) {
   if (roomPlayerCount(room) < 2 || !room.running || room.winner) return;
 
+  applyActiveEffects(room);
   updatePaddle(room.paddles.p1, room.inputs.p1);
   updatePaddle(room.paddles.p2, room.inputs.p2);
 
-  const ball = room.ball;
-  ball.x += ball.vx;
-  ball.y += ball.vy;
+  for (const ball of room.balls) {
+    ball.x += ball.vx;
+    ball.y += ball.vy;
 
-  if (ball.y - ball.r <= 0) {
-    ball.y = ball.r;
-    ball.vy = Math.abs(ball.vy);
-  } else if (ball.y + ball.r >= FIELD_HEIGHT) {
-    ball.y = FIELD_HEIGHT - ball.r;
-    ball.vy = -Math.abs(ball.vy);
+    if (ball.y - ball.r <= 0) {
+      ball.y = ball.r;
+      ball.vy = Math.abs(ball.vy);
+    } else if (ball.y + ball.r >= FIELD_HEIGHT) {
+      ball.y = FIELD_HEIGHT - ball.r;
+      ball.vy = -Math.abs(ball.vy);
+    }
+
+    if (handlePaddleBounce(ball, room.paddles.p1, -1)) room.lastHit = 'p1';
+    else if (handlePaddleBounce(ball, room.paddles.p2, 1)) room.lastHit = 'p2';
   }
 
-  handlePaddleBounce(ball, room.paddles.p1, -1);
-  handlePaddleBounce(ball, room.paddles.p2, 1);
+  resolveBallCollisions(room);
+  updateObstacle(room);
+  updatePowerUps(room);
 
-  if (ball.x - ball.r <= 0) {
+  if (room.balls.some((ball) => ball.x - ball.r <= 0)) {
     room.score.p2 += 1;
     if (room.score.p2 >= room.pointsToWin) {
       room.winner = 'p2';
       room.running = false;
     } else {
-      room.ball = createBall(-1);
+      resetRoomState(room, -1);
     }
-  } else if (ball.x + ball.r >= FIELD_WIDTH) {
+  } else if (room.balls.some((ball) => ball.x + ball.r >= FIELD_WIDTH)) {
     room.score.p1 += 1;
     if (room.score.p1 >= room.pointsToWin) {
       room.winner = 'p1';
       room.running = false;
     } else {
-      room.ball = createBall(1);
+      resetRoomState(room, 1);
     }
   }
 }
@@ -449,10 +716,11 @@ wss.on('connection', (ws) => {
 });
 
 setInterval(() => {
-  for (const room of rooms.values()) {
-    tickRoom(room);
-    broadcastRoom(room);
-  }
+  for (const room of rooms.values()) tickRoom(room);
 }, TICK_MS);
+
+setInterval(() => {
+  for (const room of rooms.values()) broadcastRoom(room);
+}, SNAPSHOT_MS);
 
 console.log(`WebSocket server listening on ws://localhost:${PORT}`);

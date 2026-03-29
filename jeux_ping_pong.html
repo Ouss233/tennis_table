@@ -1120,7 +1120,15 @@ const onlineState = {
   inRoom: false,
   isHost: false,
   connectedUsers: [],
-  rooms: []
+  rooms: [],
+  targets: {
+    p1: null,
+    p2: null,
+    ball: null
+  },
+  lastInputSentAt: 0,
+  lastInputPayload: null,
+  lastFrameAt: 0
 };
 
 const difficultySettings = {
@@ -1293,6 +1301,10 @@ function disconnectOnlineSession(){
   onlineState.isHost = false;
   onlineState.connectedUsers = [];
   onlineState.rooms = [];
+  onlineState.targets = { p1: null, p2: null, ball: null };
+  onlineState.lastInputSentAt = 0;
+  onlineState.lastInputPayload = null;
+  onlineState.lastFrameAt = 0;
   renderLobbyLists();
   updateLobbyControls();
   updateConnectionState('idle', 'Etat: non connecte');
@@ -1368,6 +1380,74 @@ function applyLobbySnapshot(snapshot){
   renderLobbyLists();
   updateLobbyControls();
 }
+function getOnlinePaddleForRole(role){
+  return role === 'p2' ? cpu : player;
+}
+function getCurrentOnlineInput(){
+  return {
+    up: getKey('w') || getKey('arrowup'),
+    down: getKey('s') || getKey('arrowdown')
+  };
+}
+function reconcileOnlinePaddle(paddle, target, blend = 0.22){
+  if(!target) return;
+  paddle.x = target.x;
+  paddle.w = target.w;
+  paddle.h = target.h;
+  if(Math.abs(target.y - paddle.y) > paddle.h * 0.85){
+    paddle.y = target.y;
+    return;
+  }
+  paddle.y += (target.y - paddle.y) * blend;
+  if(Math.abs(target.y - paddle.y) < 0.35) paddle.y = target.y;
+}
+function advanceOnlineBall(frameScale){
+  if(!running) return;
+  ball.x += ball.vx * frameScale;
+  ball.y += ball.vy * frameScale;
+  if(ball.y - ball.r <= 0){
+    ball.y = ball.r;
+    ball.vy = Math.abs(ball.vy);
+  } else if(ball.y + ball.r >= H){
+    ball.y = H - ball.r;
+    ball.vy = -Math.abs(ball.vy);
+  }
+}
+function reconcileOnlineBall(target, blend = 0.18){
+  if(!target) return;
+  ball.r = target.r;
+  ball.vx = target.vx;
+  ball.vy = target.vy;
+  if(Math.abs(target.x - ball.x) > W * 0.18 || Math.abs(target.y - ball.y) > H * 0.18){
+    ball.x = target.x;
+    ball.y = target.y;
+    return;
+  }
+  ball.x += (target.x - ball.x) * blend;
+  ball.y += (target.y - ball.y) * blend;
+  if(Math.abs(target.x - ball.x) < 0.35) ball.x = target.x;
+  if(Math.abs(target.y - ball.y) < 0.35) ball.y = target.y;
+}
+function stepLocalOnlinePaddle(frameScale){
+  const localRole = onlineState.role;
+  if(localRole !== 'p1' && localRole !== 'p2') return;
+  const paddle = getOnlinePaddleForRole(localRole);
+  const input = getCurrentOnlineInput();
+  if(input.up) paddle.y -= paddle.speed * frameScale;
+  if(input.down) paddle.y += paddle.speed * frameScale;
+  clampPaddle(paddle);
+}
+function updateOnlineFrame(){
+  const now = performance.now();
+  const frameScale = onlineState.lastFrameAt ? Math.min(2.2, (now - onlineState.lastFrameAt) / (1000 / 60)) : 1;
+  onlineState.lastFrameAt = now;
+
+  stepLocalOnlinePaddle(frameScale);
+  reconcileOnlinePaddle(player, onlineState.targets.p1, onlineState.role === 'p1' ? 0.12 : 0.22);
+  reconcileOnlinePaddle(cpu, onlineState.targets.p2, onlineState.role === 'p2' ? 0.12 : 0.22);
+  advanceOnlineBall(frameScale);
+  reconcileOnlineBall(onlineState.targets.ball);
+}
 function applyOnlineSnapshot(snapshot){
   if(!snapshot) return;
   onlineState.inRoom = true;
@@ -1383,22 +1463,51 @@ function applyOnlineSnapshot(snapshot){
   playerScore = snapshot.score?.p1 ?? 0;
   cpuScore = snapshot.score?.p2 ?? 0;
 
-  player.x = snapshot.paddles?.p1?.x != null ? snapshot.paddles.p1.x * scaleX : player.x;
-  player.y = snapshot.paddles?.p1?.y != null ? snapshot.paddles.p1.y * scaleY : player.y;
-  player.w = snapshot.paddles?.p1?.w != null ? snapshot.paddles.p1.w * scaleX : player.w;
-  player.h = snapshot.paddles?.p1?.h != null ? snapshot.paddles.p1.h * scaleY : player.h;
+  if(snapshot.paddles?.p1){
+    onlineState.targets.p1 = {
+      x: snapshot.paddles.p1.x * scaleX,
+      y: snapshot.paddles.p1.y * scaleY,
+      w: snapshot.paddles.p1.w * scaleX,
+      h: snapshot.paddles.p1.h * scaleY
+    };
+    if(!onlineState.lastFrameAt){
+      player.x = onlineState.targets.p1.x;
+      player.y = onlineState.targets.p1.y;
+      player.w = onlineState.targets.p1.w;
+      player.h = onlineState.targets.p1.h;
+    }
+  }
 
-  cpu.x = snapshot.paddles?.p2?.x != null ? snapshot.paddles.p2.x * scaleX : cpu.x;
-  cpu.y = snapshot.paddles?.p2?.y != null ? snapshot.paddles.p2.y * scaleY : cpu.y;
-  cpu.w = snapshot.paddles?.p2?.w != null ? snapshot.paddles.p2.w * scaleX : cpu.w;
-  cpu.h = snapshot.paddles?.p2?.h != null ? snapshot.paddles.p2.h * scaleY : cpu.h;
+  if(snapshot.paddles?.p2){
+    onlineState.targets.p2 = {
+      x: snapshot.paddles.p2.x * scaleX,
+      y: snapshot.paddles.p2.y * scaleY,
+      w: snapshot.paddles.p2.w * scaleX,
+      h: snapshot.paddles.p2.h * scaleY
+    };
+    if(!onlineState.lastFrameAt){
+      cpu.x = onlineState.targets.p2.x;
+      cpu.y = onlineState.targets.p2.y;
+      cpu.w = onlineState.targets.p2.w;
+      cpu.h = onlineState.targets.p2.h;
+    }
+  }
 
   if(snapshot.ball){
-    ball.x = snapshot.ball.x * scaleX;
-    ball.y = snapshot.ball.y * scaleY;
-    ball.vx = snapshot.ball.vx * scaleX;
-    ball.vy = snapshot.ball.vy * scaleY;
-    ball.r = snapshot.ball.r * Math.min(scaleX, scaleY);
+    onlineState.targets.ball = {
+      x: snapshot.ball.x * scaleX,
+      y: snapshot.ball.y * scaleY,
+      vx: snapshot.ball.vx * scaleX,
+      vy: snapshot.ball.vy * scaleY,
+      r: snapshot.ball.r * Math.min(scaleX, scaleY)
+    };
+    if(!onlineState.lastFrameAt){
+      ball.x = onlineState.targets.ball.x;
+      ball.y = onlineState.targets.ball.y;
+      ball.vx = onlineState.targets.ball.vx;
+      ball.vy = onlineState.targets.ball.vy;
+      ball.r = onlineState.targets.ball.r;
+    }
   }
 
   running = !!snapshot.running;
@@ -1435,11 +1544,19 @@ function sendOnlineMessage(payload){
 }
 function sendOnlineInputState(){
   if(!isOnlineMode() || !onlineState.connected) return;
-  sendOnlineMessage({
-    type: 'input',
-    up: getKey('w') || getKey('arrowup'),
-    down: getKey('s') || getKey('arrowdown')
-  });
+  const input = getCurrentOnlineInput();
+  const now = performance.now();
+  if(
+    onlineState.lastInputPayload &&
+    onlineState.lastInputPayload.up === input.up &&
+    onlineState.lastInputPayload.down === input.down &&
+    (now - onlineState.lastInputSentAt) < 120
+  ){
+    return;
+  }
+  onlineState.lastInputPayload = input;
+  onlineState.lastInputSentAt = now;
+  sendOnlineMessage({ type: 'input', ...input });
 }
 function connectOnlineLobby(){
   if(onlineState.connected) return;
@@ -1452,6 +1569,10 @@ function connectOnlineLobby(){
   const requestedName = playerNameEl.value.trim();
   onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
   onlineState.waiting = true;
+  onlineState.lastFrameAt = 0;
+  onlineState.lastInputSentAt = 0;
+  onlineState.lastInputPayload = null;
+  onlineState.targets = { p1: null, p2: null, ball: null };
   statusEl.textContent = 'Connexion au serveur WebSocket...';
   updateConnectionState('connecting', 'Etat: connexion en cours...');
 
@@ -2108,6 +2229,7 @@ function update(){
     pushTrailPoint(player.trail, { y: player.y }, 5);
     pushTrailPoint(cpu.trail, { y: cpu.y }, 5);
     pushTrailPoint(ball.trail, { x: ball.x, y: ball.y }, 6);
+    updateOnlineFrame();
     sendOnlineInputState();
     return;
   }

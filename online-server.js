@@ -376,9 +376,12 @@ function tickRoom(room) {
   }
 }
 
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ port: PORT, perMessageDeflate: false });
 
 wss.on('connection', (ws) => {
+  if (ws._socket && typeof ws._socket.setNoDelay === 'function') {
+    ws._socket.setNoDelay(true);
+  }
   const client = {
     id: nextClientId,
     name: `Player ${nextClientId}`,

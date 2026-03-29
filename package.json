@@ -4,9 +4,28 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node online-server.js"
+    "start": "node online-server.js",
+    "serve:static": "node static-server.mjs",
+    "dev": "node static-server.mjs",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "description": "",
+  "main": "online-server.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ouss233/tennis_table.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Ouss233/tennis_table/issues"
+  },
+  "homepage": "https://github.com/Ouss233/tennis_table#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

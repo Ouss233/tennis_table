@@ -224,6 +224,21 @@ function notifyRoom(room, text) {
   }
 }
 
+function sendRoomStatus(room) {
+  const payload = {
+    type: 'room_status',
+    roomId: room.id,
+    names: room.names,
+    waitingForOpponent: roomPlayerCount(room) < 2,
+    hostId: room.hostId
+  };
+  for (const role of ['p1', 'p2']) {
+    const ws = room.players[role];
+    if (!ws) continue;
+    send(ws, payload);
+  }
+}
+
 function leaveCurrentRoom(ws) {
   const client = getClientMeta(ws);
   if (!client || !client.roomId) return;
@@ -259,6 +274,7 @@ function leaveCurrentRoom(ws) {
   if (roomPlayerCount(room) === 0) {
     rooms.delete(room.id);
   } else {
+    sendRoomStatus(room);
     notifyRoom(room, 'Un joueur a quitte la room.');
     broadcastRoom(room);
   }
@@ -306,6 +322,7 @@ function createRoomForClient(ws, payload) {
     names: room.names,
     waitingForOpponent: true
   });
+  sendRoomStatus(room);
   broadcastRoom(room);
   broadcastLobby();
 }
@@ -343,6 +360,7 @@ function joinExistingRoom(ws, payload) {
     names: room.names,
     waitingForOpponent: roomPlayerCount(room) < 2
   });
+  sendRoomStatus(room);
   notifyRoom(room, 'Les deux joueurs sont dans la room. L’hote peut lancer la partie.');
   broadcastRoom(room);
   broadcastLobby();

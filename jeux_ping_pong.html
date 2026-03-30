@@ -1393,6 +1393,20 @@ function applyLobbySnapshot(snapshot){
   renderLobbyLists();
   updateLobbyControls();
 }
+function applyRoomStatus(snapshot){
+  if(!snapshot) return;
+  if(snapshot.roomId) onlineState.roomId = snapshot.roomId;
+  onlineState.inRoom = true;
+  onlineState.waiting = !!snapshot.waitingForOpponent;
+  onlineState.names = snapshot.names || onlineState.names;
+  if(snapshot.hostId != null && onlineState.clientId != null){
+    onlineState.isHost = snapshot.hostId === onlineState.clientId;
+  }
+  updatePlayerBanners();
+  updateScoreLabel();
+  updateBonusSideLabels();
+  updateLobbyControls();
+}
 function getOnlinePaddleForRole(role){
   return role === 'p2' ? cpu : player;
 }
@@ -1676,6 +1690,8 @@ function connectOnlineLobby(){
       if(payload.playerName) playerNameEl.value = payload.playerName;
     } else if(payload.type === 'lobby'){
       applyLobbySnapshot(payload);
+    } else if(payload.type === 'room_status'){
+      applyRoomStatus(payload);
     } else if(payload.type === 'room_joined'){
       onlineState.role = payload.role;
       onlineState.roomId = payload.roomId;

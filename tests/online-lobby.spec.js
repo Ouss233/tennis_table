@@ -46,6 +46,8 @@ async function createStartedOnlineMatch(browser, {
   await guestPage.locator('#joinRoomBtn').click();
   await expect(guestPage.locator('#connectionText')).toContainText(`room ${roomId} rejointe`);
 
+  await expect.poll(async () => (await getTestState(hostPage)).waiting).toBe(false);
+  await expect.poll(async () => (await getTestState(hostPage)).isHost).toBe(true);
   await expect(hostPage.locator('#startRoomBtn')).toBeEnabled();
   await hostPage.locator('#startRoomBtn').click();
 

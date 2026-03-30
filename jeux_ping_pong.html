@@ -1142,12 +1142,20 @@ const onlineState = {
     p2: null,
     ball: null
   },
+  lastSnapshotSeq: 0,
+  lastServerTick: 0,
+  lastServerSentAt: 0,
+  lastSnapshotReceivedAt: 0,
+  ignoredSnapshotCount: 0,
   lastInputSentAt: 0,
   lastInputPayload: null,
   lastFrameAt: 0
 };
 const ONLINE_FRAME_MS = 1000 / 60;
 const ONLINE_EXTRAPOLATION_MAX_FRAMES = 3;
+const ONLINE_DEBUG_LOG_LIMIT = 240;
+const onlineDebugLog = [];
+const motionCaptures = new Map();
 
 const difficultySettings = {
   easy:{cpuSpeed:3.5,deadZone:38,reactMs:250,aimError:54},
@@ -1300,6 +1308,95 @@ function isOnlineMode(){
 function canReplayOnlineGame(){
   return isOnlineMode() && onlineState.inRoom && onlineState.isHost && !!onlineState.winner;
 }
+function pushOnlineDebugLog(type, payload = {}){
+  const entry = {
+    at: new Date().toISOString(),
+    type,
+    payload
+  };
+  onlineDebugLog.push(entry);
+  if(onlineDebugLog.length > ONLINE_DEBUG_LOG_LIMIT) onlineDebugLog.shift();
+  try {
+    console.info('[online]', type, payload);
+  } catch {}
+}
+function getMotionCaptureTarget(target){
+  return target === 'cpu' ? cpu : player;
+}
+function startMotionCapture(id, target = 'player', options = {}){
+  const key = String(id || `capture-${Date.now()}`);
+  const captureTarget = getMotionCaptureTarget(target);
+  const capture = {
+    id: key,
+    target,
+    startedAt: performance.now(),
+    startY: captureTarget.y,
+    samples: [],
+    rafId: 0,
+    responseThreshold: Math.max(1, Number(options.responseThreshold || 3)),
+    framesAfterResponse: Math.max(1, Number(options.framesAfterResponse || 18)),
+    maxFrames: Math.max(30, Number(options.maxFrames || 180)),
+    firstResponseMs: null,
+    responseFrameIndex: null,
+    maxJump: 0,
+    totalTravel: 0,
+    stopped: false,
+    timedOut: false
+  };
+  const step = (now) => {
+    if(capture.stopped) return;
+    const currentTarget = getMotionCaptureTarget(target);
+    const y = currentTarget.y;
+    const previous = capture.samples[capture.samples.length - 1];
+    if(previous) capture.maxJump = Math.max(capture.maxJump, Math.abs(y - previous.y));
+    capture.totalTravel = Math.max(capture.totalTravel, Math.abs(y - capture.startY));
+    if(capture.firstResponseMs === null && Math.abs(y - capture.startY) >= capture.responseThreshold){
+      capture.firstResponseMs = now - capture.startedAt;
+      capture.responseFrameIndex = capture.samples.length;
+    }
+    capture.samples.push({
+      elapsedMs: now - capture.startedAt,
+      y
+    });
+    if(capture.responseFrameIndex !== null && (capture.samples.length - capture.responseFrameIndex) >= capture.framesAfterResponse){
+      capture.stopped = true;
+      return;
+    }
+    if(capture.samples.length >= capture.maxFrames){
+      capture.timedOut = true;
+      capture.stopped = true;
+      return;
+    }
+    capture.rafId = requestAnimationFrame(step);
+  };
+  capture.rafId = requestAnimationFrame(step);
+  motionCaptures.set(key, capture);
+  return key;
+}
+function getMotionCaptureSnapshot(id){
+  const capture = motionCaptures.get(String(id));
+  if(!capture) return null;
+  const lastSample = capture.samples[capture.samples.length - 1];
+  return {
+    id: capture.id,
+    target: capture.target,
+    startY: capture.startY,
+    endY: lastSample?.y ?? capture.startY,
+    sampleCount: capture.samples.length,
+    firstResponseMs: capture.firstResponseMs,
+    maxJump: capture.maxJump,
+    totalTravel: capture.totalTravel,
+    stopped: capture.stopped,
+    timedOut: capture.timedOut
+  };
+}
+function stopMotionCapture(id){
+  const capture = motionCaptures.get(String(id));
+  if(!capture) return null;
+  capture.stopped = true;
+  if(capture.rafId) cancelAnimationFrame(capture.rafId);
+  return getMotionCaptureSnapshot(id);
+}
 function syncPauseButtonLabel(){
   pauseBtn.textContent = paused ? 'Reprendre' : 'Pause';
 }
@@ -1329,9 +1426,15 @@ function disconnectOnlineSession(){
   onlineState.rooms = [];
   onlineState.selectedJoinRoomId = '';
   onlineState.targets = { p1: null, p2: null, ball: null };
+  onlineState.lastSnapshotSeq = 0;
+  onlineState.lastServerTick = 0;
+  onlineState.lastServerSentAt = 0;
+  onlineState.lastSnapshotReceivedAt = 0;
+  onlineState.ignoredSnapshotCount = 0;
   onlineState.lastInputSentAt = 0;
   onlineState.lastInputPayload = null;
   onlineState.lastFrameAt = 0;
+  pushOnlineDebugLog('session_disconnected');
   renderLobbyLists();
   updateLobbyControls();
   updateConnectionState('idle', 'Etat: non connecte');
@@ -1425,6 +1528,11 @@ function applyLobbySnapshot(snapshot){
 }
 function applyRoomStatus(snapshot){
   if(!snapshot) return;
+  pushOnlineDebugLog('room_status', {
+    roomId: snapshot.roomId || onlineState.roomId,
+    hostId: snapshot.hostId ?? null,
+    waitingForOpponent: !!snapshot.waitingForOpponent
+  });
   if(snapshot.roomId) onlineState.roomId = snapshot.roomId;
   onlineState.inRoom = true;
   onlineState.waiting = !!snapshot.waitingForOpponent;
@@ -1569,6 +1677,37 @@ function updateOnlineFrame(){
 }
 function applyOnlineSnapshot(snapshot){
   if(!snapshot) return;
+  const receivedAt = performance.now();
+  const snapshotSeq = Number(snapshot.snapshotSeq || 0);
+  if(snapshotSeq && onlineState.lastSnapshotSeq && snapshotSeq <= onlineState.lastSnapshotSeq){
+    onlineState.ignoredSnapshotCount += 1;
+    pushOnlineDebugLog('snapshot_ignored', {
+      roomId: snapshot.roomId || onlineState.roomId,
+      snapshotSeq,
+      previousSnapshotSeq: onlineState.lastSnapshotSeq,
+      tick: snapshot.tick || 0
+    });
+    return;
+  }
+  if(snapshotSeq && onlineState.lastSnapshotSeq && snapshotSeq > (onlineState.lastSnapshotSeq + 1)){
+    pushOnlineDebugLog('snapshot_gap', {
+      roomId: snapshot.roomId || onlineState.roomId,
+      previousSnapshotSeq: onlineState.lastSnapshotSeq,
+      snapshotSeq
+    });
+  }
+  onlineState.lastSnapshotSeq = snapshotSeq || onlineState.lastSnapshotSeq;
+  onlineState.lastServerTick = Number(snapshot.tick || 0);
+  onlineState.lastServerSentAt = Number(snapshot.sentAt || 0);
+  onlineState.lastSnapshotReceivedAt = receivedAt;
+  pushOnlineDebugLog('snapshot_applied', {
+    roomId: snapshot.roomId || onlineState.roomId,
+    snapshotSeq: onlineState.lastSnapshotSeq,
+    tick: onlineState.lastServerTick,
+    running: !!snapshot.running,
+    paused: !!snapshot.paused,
+    winner: snapshot.winner || null
+  });
   const wasRunning = running;
   const wasPaused = paused;
   const hadWinner = !!onlineState.winner;
@@ -1696,7 +1835,16 @@ function applyOnlineSnapshot(snapshot){
 }
 function sendOnlineMessage(payload){
   if(onlineState.socket && onlineState.socket.readyState === WebSocket.OPEN){
+    pushOnlineDebugLog('socket_send', {
+      type: payload.type,
+      roomId: onlineState.roomId || payload.roomId || null
+    });
     onlineState.socket.send(JSON.stringify(payload));
+  } else {
+    pushOnlineDebugLog('socket_send_skipped', {
+      type: payload.type,
+      readyState: onlineState.socket ? onlineState.socket.readyState : -1
+    });
   }
 }
 function sendOnlineInputState(){
@@ -1731,11 +1879,21 @@ function connectOnlineLobby(){
   onlineState.lastInputSentAt = 0;
   onlineState.lastInputPayload = null;
   onlineState.targets = { p1: null, p2: null, ball: null };
+  onlineState.lastSnapshotSeq = 0;
+  onlineState.lastServerTick = 0;
+  onlineState.lastServerSentAt = 0;
+  onlineState.lastSnapshotReceivedAt = 0;
+  onlineState.ignoredSnapshotCount = 0;
   statusEl.textContent = 'Connexion au serveur WebSocket...';
   updateConnectionState('connecting', 'Etat: connexion en cours...');
+  pushOnlineDebugLog('socket_connecting', {
+    url: serverUrlEl.value.trim() || 'wss://tennis-table-ws.onrender.com',
+    playerName: onlineState.playerName || null
+  });
 
   socket.addEventListener('open', () => {
     onlineState.connected = true;
+    pushOnlineDebugLog('socket_open', { clientId: onlineState.clientId });
     updateConnectionState('connected', 'Etat: connecte au serveur');
     sendOnlineMessage({
       type: 'hello',
@@ -1746,6 +1904,10 @@ function connectOnlineLobby(){
 
   socket.addEventListener('message', (event) => {
     const payload = JSON.parse(event.data);
+    pushOnlineDebugLog('socket_message', {
+      type: payload.type,
+      roomId: payload.roomId || payload.state?.roomId || onlineState.roomId || null
+    });
     if(payload.type === 'hello_ack'){
       onlineState.clientId = payload.clientId;
       if(payload.playerName) playerNameEl.value = payload.playerName;
@@ -1791,10 +1953,15 @@ function connectOnlineLobby(){
       statusEl.textContent = payload.text;
     } else if(payload.type === 'error'){
       statusEl.textContent = payload.message;
+      pushOnlineDebugLog('socket_error_message', { message: payload.message });
     }
   });
 
   socket.addEventListener('close', () => {
+    pushOnlineDebugLog('socket_close', {
+      roomId: onlineState.roomId || null,
+      clientId: onlineState.clientId
+    });
     if(isOnlineMode()){
       onlineState.connected = false;
       onlineState.inRoom = false;
@@ -1806,6 +1973,10 @@ function connectOnlineLobby(){
   });
 
   socket.addEventListener('error', () => {
+    pushOnlineDebugLog('socket_error', {
+      roomId: onlineState.roomId || null,
+      clientId: onlineState.clientId
+    });
     statusEl.textContent = 'Impossible de joindre le serveur WebSocket.';
     updateConnectionState('idle', 'Etat: erreur de connexion');
   });
@@ -2657,6 +2828,18 @@ gameModeEl.addEventListener('change', ()=>{
 pointsToWinEl.addEventListener('input', updateCompactSummary);
 
 window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateConnectionState('idle', 'Etat: non connecte'); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
+window.addEventListener('error', (event) => {
+  pushOnlineDebugLog('window_error', {
+    message: event.message,
+    source: event.filename || '',
+    line: event.lineno || 0
+  });
+});
+window.addEventListener('unhandledrejection', (event) => {
+  pushOnlineDebugLog('unhandled_rejection', {
+    reason: String(event.reason || '')
+  });
+});
 
 window.__pongTestApi = {
   forceOnlineWinner(winner = 'p1'){
@@ -2668,6 +2851,18 @@ window.__pongTestApi = {
     if(!canReplayOnlineGame()) return false;
     requestOnlineReplay();
     return true;
+  },
+  startMotionCapture(id, target = 'player', options = {}){
+    return startMotionCapture(id, target, options);
+  },
+  getMotionCapture(id){
+    return getMotionCaptureSnapshot(id);
+  },
+  stopMotionCapture(id){
+    return stopMotionCapture(id);
+  },
+  getOnlineDebugLog(){
+    return onlineDebugLog.slice();
   },
   getState(){
     return {
@@ -2684,6 +2879,11 @@ window.__pongTestApi = {
       isHost: onlineState.isHost,
       role: onlineState.role,
       roomId: onlineState.roomId,
+      snapshotSeq: onlineState.lastSnapshotSeq,
+      serverTick: onlineState.lastServerTick,
+      serverSentAt: onlineState.lastServerSentAt,
+      lastSnapshotReceivedAt: onlineState.lastSnapshotReceivedAt,
+      ignoredSnapshotCount: onlineState.ignoredSnapshotCount,
       obstacleCount: obstacles.length,
       powerUpCount: powerUps.length,
       activeBonusCount: activeBonusEffects.length,

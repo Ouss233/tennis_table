@@ -20,6 +20,10 @@ const rooms = new Map();
 const clients = new Map();
 let nextClientId = 1;
 
+function logServerEvent(type, payload = {}) {
+  console.log(`[ws] ${type} ${JSON.stringify(payload)}`);
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -92,7 +96,9 @@ function createRoom(id) {
     running: false,
     paused: false,
     winner: null,
-    pointsToWin: MAX_SCORE_DEFAULT
+    pointsToWin: MAX_SCORE_DEFAULT,
+    tick: 0,
+    snapshotSeq: 0
   };
 }
 
@@ -179,6 +185,9 @@ function serializeRoom(room) {
   const now = Date.now();
   return {
     roomId: room.id,
+    snapshotSeq: room.snapshotSeq,
+    tick: room.tick,
+    sentAt: now,
     field: { width: FIELD_WIDTH, height: FIELD_HEIGHT },
     score: room.score,
     names: room.names,
@@ -205,13 +214,15 @@ function serializeRoom(room) {
 }
 
 function broadcastRoom(room) {
+  room.snapshotSeq += 1;
+  const state = serializeRoom(room);
   for (const role of ['p1', 'p2']) {
     const ws = room.players[role];
     if (!ws) continue;
     send(ws, {
       type: 'state',
       role,
-      state: serializeRoom(room)
+      state
     });
   }
 }
@@ -274,6 +285,7 @@ function leaveCurrentRoom(ws) {
   if (roomPlayerCount(room) === 0) {
     rooms.delete(room.id);
   } else {
+    logServerEvent('room_player_left', { roomId: room.id, clientId: client.id, hostId: room.hostId });
     sendRoomStatus(room);
     notifyRoom(room, 'Un joueur a quitte la room.');
     broadcastRoom(room);
@@ -325,6 +337,7 @@ function createRoomForClient(ws, payload) {
     names: room.names,
     waitingForOpponent: true
   });
+  logServerEvent('room_created', { roomId, clientId: client.id, playerName: client.name });
   sendRoomStatus(room);
   broadcastRoom(room);
   broadcastLobby();
@@ -366,6 +379,7 @@ function joinExistingRoom(ws, payload) {
     names: room.names,
     waitingForOpponent: roomPlayerCount(room) < 2
   });
+  logServerEvent('room_joined', { roomId, clientId: client.id, role, playerName: client.name });
   sendRoomStatus(room);
   notifyRoom(room, 'Les deux joueurs sont dans la room. L’hote peut lancer la partie.');
   broadcastRoom(room);
@@ -388,7 +402,9 @@ function startRoomGame(ws, payload) {
   room.score.p1 = 0;
   room.score.p2 = 0;
   room.pointsToWin = clamp(parseInt(payload.pointsToWin || MAX_SCORE_DEFAULT, 10) || MAX_SCORE_DEFAULT, 1, 15);
+  room.tick = 0;
   resetRoomState(room, Math.random() > 0.5 ? 1 : -1);
+  logServerEvent('room_started', { roomId: room.id, clientId: client.id, pointsToWin: room.pointsToWin });
   notifyRoom(room, 'La partie commence.');
   broadcastRoom(room);
 }
@@ -399,6 +415,7 @@ function setRoomPaused(ws, shouldPause) {
   const room = rooms.get(client.roomId);
   if (!room || !room.running || room.winner) return;
   room.paused = !!shouldPause;
+  logServerEvent(room.paused ? 'room_paused' : 'room_resumed', { roomId: room.id, clientId: client.id });
   notifyRoom(room, room.paused ? 'Partie en pause.' : 'Partie reprise.');
   broadcastRoom(room);
 }
@@ -415,6 +432,7 @@ function forceWinnerForTests(ws, winner) {
   room.running = false;
   room.paused = false;
   room.waitingForServe = false;
+  logServerEvent('room_forced_winner', { roomId: room.id, winner: normalizedWinner });
   notifyRoom(room, `Test: victoire forcee pour ${room.names[normalizedWinner] || normalizedWinner}.`);
   broadcastRoom(room);
 }
@@ -662,6 +680,7 @@ function handlePaddleBounce(ball, paddle, direction) {
 function tickRoom(room) {
   if (roomPlayerCount(room) < 2 || !room.running || room.winner) return;
   if (room.paused) return;
+  room.tick += 1;
 
   applyActiveEffects(room);
   updatePaddle(room.paddles.p1, room.inputs.p1);
@@ -697,6 +716,7 @@ function tickRoom(room) {
     if (room.score.p2 >= room.pointsToWin) {
       room.winner = 'p2';
       room.running = false;
+      logServerEvent('room_finished', { roomId: room.id, winner: 'p2', score: room.score });
     } else {
       resetRoomState(room, -1);
     }
@@ -705,6 +725,7 @@ function tickRoom(room) {
     if (room.score.p1 >= room.pointsToWin) {
       room.winner = 'p1';
       room.running = false;
+      logServerEvent('room_finished', { roomId: room.id, winner: 'p1', score: room.score });
     } else {
       resetRoomState(room, 1);
     }
@@ -726,6 +747,7 @@ wss.on('connection', (ws) => {
   };
   nextClientId += 1;
   clients.set(ws, client);
+  logServerEvent('client_connected', { clientId: client.id });
   send(ws, { type: 'welcome', message: 'Connexion etablie.' });
   broadcastLobby();
 
@@ -741,6 +763,7 @@ wss.on('connection', (ws) => {
     if (payload.type === 'hello') {
       assignClientName(ws, payload.playerName);
       const currentClient = clients.get(ws);
+      logServerEvent('client_hello', { clientId: currentClient?.id, playerName: currentClient?.name });
       send(ws, { type: 'hello_ack', clientId: currentClient?.id, playerName: currentClient?.name });
       broadcastLobby();
       return;
@@ -785,6 +808,7 @@ wss.on('connection', (ws) => {
     if (!room) return;
 
     if (payload.type === 'input') {
+      logServerEvent('input_received', { roomId: room.id, clientId: client.id, role: client.role, up: !!payload.up, down: !!payload.down });
       room.inputs[client.role] = {
         up: !!payload.up,
         down: !!payload.down
@@ -794,6 +818,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    const client = clients.get(ws);
+    logServerEvent('client_disconnected', { clientId: client?.id || null });
     leaveRoom(ws);
   });
 });

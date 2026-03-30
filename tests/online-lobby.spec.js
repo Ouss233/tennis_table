@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
 
+function createMotionCaptureId(prefix = 'motion') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 async function openOnlineLobby(page, playerName) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('online');
@@ -25,49 +29,49 @@ async function openLocalTwoPlayerGame(page) {
   await expect(page.locator('#gameContainer')).toHaveClass(/playing/);
 }
 
-async function recordMotionSamples(page, key, durationMs = 420, sampleIntervalMs = 35) {
-  const samples = [];
-  const startedAt = Date.now();
-  while ((Date.now() - startedAt) <= durationMs) {
-    const state = await getTestState(page);
-    samples.push({
-      elapsedMs: Date.now() - startedAt,
-      playerY: state.playerY
-    });
-    await page.waitForTimeout(sampleIntervalMs);
-  }
-  return samples;
+async function createIsolatedContext(browser) {
+  return browser.newContext({
+    viewport: { width: 1280, height: 900 }
+  });
 }
 
-function analyzeMotion(samples) {
-  const origin = samples[0]?.playerY ?? 0;
-  let firstResponseMs = null;
-  let maxJump = 0;
-  let totalTravel = 0;
-  for (let index = 1; index < samples.length; index += 1) {
-    const previous = samples[index - 1];
-    const current = samples[index];
-    const delta = Math.abs(current.playerY - previous.playerY);
-    maxJump = Math.max(maxJump, delta);
-    totalTravel = Math.max(totalTravel, Math.abs(current.playerY - origin));
-    if (firstResponseMs === null && Math.abs(current.playerY - origin) >= 3) {
-      firstResponseMs = current.elapsedMs;
-    }
-  }
-  return {
-    firstResponseMs: firstResponseMs ?? Number.POSITIVE_INFINITY,
-    maxJump,
-    totalTravel
-  };
+async function startMotionCapture(page, target = 'player', prefix = 'capture', options = {}) {
+  const captureId = createMotionCaptureId(prefix);
+  await page.evaluate(({ captureId: id, observedTarget, captureOptions }) => {
+    window.__pongTestApi.startMotionCapture(id, observedTarget, captureOptions);
+  }, { captureId, observedTarget: target, captureOptions: options });
+  return captureId;
 }
 
-async function captureMotionWhileHolding({ actionPage, observedPage, key = 'w', durationMs = 420 }) {
+async function getMotionCapture(page, captureId) {
+  return page.evaluate((id) => window.__pongTestApi.getMotionCapture(id), captureId);
+}
+
+async function stopMotionCapture(page, captureId) {
+  return page.evaluate((id) => window.__pongTestApi.stopMotionCapture(id), captureId);
+}
+
+async function captureMotionWhileHolding({
+  actionPage,
+  observedPage,
+  key = 'w',
+  observedTarget = 'player',
+  framesAfterResponse = 18
+}) {
   await actionPage.locator('#game').click();
-  const samplingPromise = recordMotionSamples(observedPage, key, durationMs + 260);
+  const captureId = await startMotionCapture(observedPage, observedTarget, key, {
+    framesAfterResponse
+  });
   await actionPage.keyboard.down(key);
-  await actionPage.waitForTimeout(durationMs);
+  await expect.poll(async () => {
+    const capture = await getMotionCapture(observedPage, captureId);
+    return capture?.stopped ?? false;
+  }).toBe(true);
   await actionPage.keyboard.up(key);
-  return analyzeMotion(await samplingPromise);
+  const capture = await stopMotionCapture(observedPage, captureId);
+  expect(capture?.timedOut).toBe(false);
+  expect(capture?.sampleCount ?? 0).toBeGreaterThan(8);
+  return capture;
 }
 
 async function waitForPaddleSync(pageA, pageB, tolerance = 14) {
@@ -83,8 +87,8 @@ async function createStartedOnlineMatch(browser, {
   guestName = 'Guest Player',
   pointsToWin = 3
 } = {}) {
-  const contextOne = await browser.newContext();
-  const contextTwo = await browser.newContext();
+  const contextOne = await createIsolatedContext(browser);
+  const contextTwo = await createIsolatedContext(browser);
   const hostPage = await contextOne.newPage();
   const guestPage = await contextTwo.newPage();
 
@@ -113,6 +117,8 @@ async function createStartedOnlineMatch(browser, {
 
   await expect(hostPage.locator('#gameContainer')).toHaveClass(/playing/);
   await expect(guestPage.locator('#gameContainer')).toHaveClass(/playing/);
+  await expect.poll(async () => (await getTestState(hostPage)).snapshotSeq).toBeGreaterThan(0);
+  await expect.poll(async () => (await getTestState(guestPage)).snapshotSeq).toBeGreaterThan(0);
 
   return { contextOne, contextTwo, hostPage, guestPage, roomId };
 }
@@ -142,8 +148,8 @@ test.describe('Online Lobby', () => {
 
   test('prevents joining a room until one is selected from the list', async ({ browser }) => {
     const roomId = `pick-${Date.now()}`;
-    const contextOne = await browser.newContext();
-    const contextTwo = await browser.newContext();
+    const contextOne = await createIsolatedContext(browser);
+    const contextTwo = await createIsolatedContext(browser);
     const hostPage = await contextOne.newPage();
     const guestPage = await contextTwo.newPage();
 
@@ -170,8 +176,8 @@ test.describe('Online Lobby', () => {
 
   test('rejects creating a room with an existing name', async ({ browser }) => {
     const roomId = `dup-${Date.now()}`;
-    const contextOne = await browser.newContext();
-    const contextTwo = await browser.newContext();
+    const contextOne = await createIsolatedContext(browser);
+    const contextTwo = await createIsolatedContext(browser);
     const hostPage = await contextOne.newPage();
     const challengerPage = await contextTwo.newPage();
 
@@ -195,7 +201,7 @@ test.describe('Online Lobby', () => {
 
   test('prevents creating another room while already inside one', async ({ browser }) => {
     const roomId = `solo-${Date.now()}`;
-    const context = await browser.newContext();
+    const context = await createIsolatedContext(browser);
     const page = await context.newPage();
 
     await openOnlineLobby(page, 'Busy Host');
@@ -213,8 +219,8 @@ test.describe('Online Lobby', () => {
 
   test('keeps the illustrated background in online mode before and after game start', async ({ browser }) => {
     const roomId = `bg-${Date.now()}`;
-    const contextOne = await browser.newContext();
-    const contextTwo = await browser.newContext();
+    const contextOne = await createIsolatedContext(browser);
+    const contextTwo = await createIsolatedContext(browser);
     const hostPage = await contextOne.newPage();
     const guestPage = await contextTwo.newPage();
 
@@ -258,21 +264,29 @@ test.describe('Online Lobby', () => {
     await expect.poll(async () => (await getTestState(hostPage)).obstacleCount).toBe(1);
     await expect.poll(async () => (await getTestState(guestPage)).obstacleCount).toBe(1);
 
-    const initialHostState = await getTestState(hostPage);
-    const initialGuestState = await getTestState(guestPage);
-
-    await hostPage.locator('#game').click();
-    await hostPage.keyboard.down('w');
-    await hostPage.waitForTimeout(350);
-    await hostPage.keyboard.up('w');
-
-    await expect.poll(async () => (await getTestState(hostPage)).playerY).not.toBe(initialHostState.playerY);
-    await expect.poll(async () => (await getTestState(guestPage)).playerY).not.toBe(initialGuestState.playerY);
+    const hostMotion = await captureMotionWhileHolding({
+      actionPage: hostPage,
+      observedPage: hostPage,
+      key: 'w',
+      observedTarget: 'player',
+      framesAfterResponse: 14
+    });
+    const guestMotion = await captureMotionWhileHolding({
+      actionPage: hostPage,
+      observedPage: guestPage,
+      key: 'w',
+      observedTarget: 'player',
+      framesAfterResponse: 14
+    });
 
     await expect(hostPage.locator('#pauseBtn')).toBeVisible();
     await expect(guestPage.locator('#pauseBtn')).toBeVisible();
     await expect.poll(async () => (await getTestState(hostPage)).scoreText).toContain('Host Player');
     await expect.poll(async () => (await getTestState(guestPage)).scoreText).toContain('Guest Player');
+    expect(hostMotion.totalTravel).toBeGreaterThan(18);
+    expect(guestMotion.totalTravel).toBeGreaterThan(18);
+    await expect.poll(async () => (await getTestState(hostPage)).ignoredSnapshotCount).toBe(0);
+    await expect.poll(async () => (await getTestState(guestPage)).ignoredSnapshotCount).toBe(0);
 
     await contextOne.close();
     await contextTwo.close();
@@ -332,13 +346,15 @@ test.describe('Online Lobby', () => {
   });
 
   test('keeps remote two-player movement responsive and smooth compared with local play', async ({ browser }) => {
-    const localContext = await browser.newContext();
+    const localContext = await createIsolatedContext(browser);
     const localPage = await localContext.newPage();
     await openLocalTwoPlayerGame(localPage);
 
     const localMotion = await captureMotionWhileHolding({
       actionPage: localPage,
-      observedPage: localPage
+      observedPage: localPage,
+      observedTarget: 'player',
+      framesAfterResponse: 18
     });
 
     const { contextOne, contextTwo, hostPage, guestPage } = await createStartedOnlineMatch(browser, {
@@ -354,6 +370,7 @@ test.describe('Online Lobby', () => {
     expect(onlineMotion.firstResponseMs).toBeLessThanOrEqual(localMotion.firstResponseMs + 160);
     expect(onlineMotion.maxJump).toBeLessThanOrEqual(Math.max(localMotion.maxJump + 18, 26));
     expect(onlineMotion.totalTravel).toBeGreaterThan(localMotion.totalTravel * 0.7);
+    await expect.poll(async () => (await getTestState(guestPage)).ignoredSnapshotCount).toBe(0);
 
     await localContext.close();
     await contextOne.close();
@@ -362,8 +379,8 @@ test.describe('Online Lobby', () => {
 
   test('selecting an available room does not auto-join it', async ({ browser }) => {
     const roomId = `sel-${Date.now()}`;
-    const contextOne = await browser.newContext();
-    const contextTwo = await browser.newContext();
+    const contextOne = await createIsolatedContext(browser);
+    const contextTwo = await createIsolatedContext(browser);
     const hostPage = await contextOne.newPage();
     const guestPage = await contextTwo.newPage();
 

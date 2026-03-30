@@ -219,14 +219,16 @@ test.describe('Online Lobby', () => {
     const guestPage = await contextTwo.newPage();
 
     await openOnlineLobby(hostPage, 'Background Host');
-    expect(await getBackgroundStyle(hostPage)).toContain('tabletennis43.jpg');
+    expect(await getBackgroundStyle(hostPage)).toContain('radial-gradient');
+    expect(await getBackgroundStyle(hostPage)).not.toContain('raw.githubusercontent');
     await hostPage.locator('#roomId').fill(roomId);
     await hostPage.locator('#connectOnlineBtn').click();
     await expect(hostPage.locator('#connectionText')).toContainText('connecte au serveur');
     await hostPage.locator('#createRoomBtn').click();
 
     await openOnlineLobby(guestPage, 'Background Guest');
-    expect(await getBackgroundStyle(guestPage)).toContain('tabletennis43.jpg');
+    expect(await getBackgroundStyle(guestPage)).toContain('radial-gradient');
+    expect(await getBackgroundStyle(guestPage)).not.toContain('raw.githubusercontent');
     await guestPage.locator('#connectOnlineBtn').click();
     await expect(guestPage.locator('#roomsList')).toContainText(roomId);
     await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
@@ -238,8 +240,8 @@ test.describe('Online Lobby', () => {
 
     await expect(hostPage.locator('#gameContainer')).toHaveClass(/playing/);
     await expect(guestPage.locator('#gameContainer')).toHaveClass(/playing/);
-    expect(await getBackgroundStyle(hostPage)).toContain('tabletennis43.jpg');
-    expect(await getBackgroundStyle(guestPage)).toContain('tabletennis43.jpg');
+    expect(await getBackgroundStyle(hostPage)).toContain('radial-gradient');
+    expect(await getBackgroundStyle(guestPage)).toContain('radial-gradient');
 
     await contextOne.close();
     await contextTwo.close();

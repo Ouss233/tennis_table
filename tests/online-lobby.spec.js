@@ -3,8 +3,6 @@ import { test, expect } from '@playwright/test';
 async function openOnlineLobby(page, playerName) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('online');
-  await page.getByRole('button', { name: 'Lobby online' }).click();
-  await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeVisible();
   await expect(page.locator('#playerName')).toBeVisible();
   await page.locator('#playerName').fill(playerName);
   await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
@@ -101,7 +99,8 @@ async function createStartedOnlineMatch(browser, {
   await guestPage.locator('#connectOnlineBtn').click();
   await expect(guestPage.locator('#connectionText')).toContainText('connecte au serveur');
   await expect(guestPage.locator('#roomsList')).toContainText(roomId);
-  await guestPage.locator('#roomId').fill(roomId);
+  await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
+  await expect(guestPage.locator('#roomId')).toHaveValue(roomId);
   await guestPage.locator('#joinRoomBtn').click();
   await expect(guestPage.locator('#connectionText')).toContainText(`room ${roomId} rejointe`);
 
@@ -117,6 +116,18 @@ async function createStartedOnlineMatch(browser, {
 }
 
 test.describe('Online Lobby', () => {
+  test('connects directly from the main online action without opening the lobby dialog', async ({ page }) => {
+    await page.goto('/jeux_ping_pong.html');
+    await page.locator('#gameMode').selectOption('online');
+    await page.locator('#playerName').fill('Direct Player');
+    await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
+
+    await page.locator('#startBtn').click();
+
+    await expect(page.locator('#connectionText')).toContainText('connecte au serveur');
+    await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeHidden();
+  });
+
   test('connects to the local websocket lobby', async ({ page }) => {
     await openOnlineLobby(page, 'Player Alpha');
 
@@ -124,6 +135,77 @@ test.describe('Online Lobby', () => {
 
     await expect(page.locator('#connectionText')).toContainText('connecte au serveur');
     await expect(page.locator('#connectedUsersList')).toContainText('Player Alpha');
+  });
+
+  test('prevents joining a room until one is selected from the list', async ({ browser }) => {
+    const roomId = `pick-${Date.now()}`;
+    const contextOne = await browser.newContext();
+    const contextTwo = await browser.newContext();
+    const hostPage = await contextOne.newPage();
+    const guestPage = await contextTwo.newPage();
+
+    await openOnlineLobby(hostPage, 'Picker Host');
+    await hostPage.locator('#roomId').fill(roomId);
+    await hostPage.locator('#connectOnlineBtn').click();
+    await hostPage.locator('#createRoomBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText(`room ${roomId} creee`);
+
+    await openOnlineLobby(guestPage, 'Picker Guest');
+    await guestPage.locator('#connectOnlineBtn').click();
+    await expect(guestPage.locator('#roomsList')).toContainText(roomId);
+    await expect(guestPage.locator('#joinRoomBtn')).toBeDisabled();
+
+    await guestPage.locator('#roomId').fill(roomId);
+    await expect(guestPage.locator('#joinRoomBtn')).toBeDisabled();
+
+    await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
+    await expect(guestPage.locator('#joinRoomBtn')).toBeEnabled();
+
+    await contextOne.close();
+    await contextTwo.close();
+  });
+
+  test('rejects creating a room with an existing name', async ({ browser }) => {
+    const roomId = `dup-${Date.now()}`;
+    const contextOne = await browser.newContext();
+    const contextTwo = await browser.newContext();
+    const hostPage = await contextOne.newPage();
+    const challengerPage = await contextTwo.newPage();
+
+    await openOnlineLobby(hostPage, 'Dup Host');
+    await hostPage.locator('#roomId').fill(roomId);
+    await hostPage.locator('#connectOnlineBtn').click();
+    await hostPage.locator('#createRoomBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText(`room ${roomId} creee`);
+
+    await openOnlineLobby(challengerPage, 'Dup Challenger');
+    await challengerPage.locator('#roomId').fill(roomId);
+    await challengerPage.locator('#connectOnlineBtn').click();
+    await challengerPage.locator('#createRoomBtn').click();
+
+    await expect.poll(async () => (await getTestState(challengerPage)).statusText).toContain('Cette room existe deja');
+    await expect.poll(async () => (await getTestState(challengerPage)).inRoom).toBe(false);
+
+    await contextOne.close();
+    await contextTwo.close();
+  });
+
+  test('prevents creating another room while already inside one', async ({ browser }) => {
+    const roomId = `solo-${Date.now()}`;
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    await openOnlineLobby(page, 'Busy Host');
+    await page.locator('#roomId').fill(roomId);
+    await page.locator('#connectOnlineBtn').click();
+    await page.locator('#createRoomBtn').click();
+    await expect(page.locator('#connectionText')).toContainText(`room ${roomId} creee`);
+
+    await page.locator('#roomId').fill(`${roomId}-bis`);
+    await expect(page.locator('#createRoomBtn')).toBeDisabled();
+    await expect.poll(async () => (await getTestState(page)).roomId).toBe(roomId);
+
+    await context.close();
   });
 
   test('keeps the illustrated background in online mode before and after game start', async ({ browser }) => {
@@ -144,7 +226,8 @@ test.describe('Online Lobby', () => {
     expect(await getBackgroundStyle(guestPage)).toContain('tabletennis43.jpg');
     await guestPage.locator('#connectOnlineBtn').click();
     await expect(guestPage.locator('#roomsList')).toContainText(roomId);
-    await guestPage.locator('#roomId').fill(roomId);
+    await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
+    await expect(guestPage.locator('#roomId')).toHaveValue(roomId);
     await guestPage.locator('#joinRoomBtn').click();
 
     await expect(hostPage.locator('#startRoomBtn')).toBeEnabled();

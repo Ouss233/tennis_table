@@ -295,7 +295,10 @@ function assignClientName(ws, requestedName, fallbackName = null) {
 function createRoomForClient(ws, payload) {
   const client = getClientMeta(ws);
   if (!client) return;
-  leaveCurrentRoom(ws);
+  if (client.roomId) {
+    send(ws, { type: 'error', message: 'Quittez votre room actuelle avant d’en creer une autre.' });
+    return;
+  }
   const roomId = String(payload.roomId || '').trim() || `room-${client.id}`;
   if (rooms.has(roomId)) {
     send(ws, { type: 'error', message: 'Cette room existe deja.' });
@@ -330,7 +333,10 @@ function createRoomForClient(ws, payload) {
 function joinExistingRoom(ws, payload) {
   const client = getClientMeta(ws);
   if (!client) return;
-  leaveCurrentRoom(ws);
+  if (client.roomId) {
+    send(ws, { type: 'error', message: 'Quittez votre room actuelle avant d’en rejoindre une autre.' });
+    return;
+  }
   const roomId = String(payload.roomId || '').trim();
   const room = rooms.get(roomId);
   if (!room) {

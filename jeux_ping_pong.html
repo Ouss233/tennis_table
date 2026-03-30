@@ -669,6 +669,11 @@
       background:rgba(255,255,255,0.08);
       transform:translateY(-1px);
     }
+    .lobbyItem.selected{
+      background:rgba(255,107,45,0.18);
+      border-color:rgba(255,138,61,0.42);
+      box-shadow:0 0 0 1px rgba(255,138,61,0.18);
+    }
     .lobbyItem strong{
       font:700 12px/1 var(--title-font);
       letter-spacing:.04em;
@@ -1125,6 +1130,7 @@ const onlineState = {
   isHost: false,
   connectedUsers: [],
   rooms: [],
+  selectedJoinRoomId: '',
   targets: {
     p1: null,
     p2: null,
@@ -1256,9 +1262,7 @@ function closeOnlineLobbyModal(){
   onlineLobbyModal.setAttribute('aria-hidden', 'true');
 }
 function mountOnlineControlsIntoLobby(){
-  document.querySelectorAll('.onlineOnly').forEach((element) => {
-    onlineLobbyBodyEl.appendChild(element);
-  });
+  onlineLobbyBodyEl.innerHTML = '<p class="lobbyIntro">Le lobby online est integre directement au menu principal.</p>';
 }
 function updateConnectionState(state, text){
   connectionDotEl.classList.remove('connected', 'connecting');
@@ -1315,6 +1319,7 @@ function disconnectOnlineSession(){
   onlineState.isHost = false;
   onlineState.connectedUsers = [];
   onlineState.rooms = [];
+  onlineState.selectedJoinRoomId = '';
   onlineState.targets = { p1: null, p2: null, ball: null };
   onlineState.lastInputSentAt = 0;
   onlineState.lastInputPayload = null;
@@ -1365,12 +1370,19 @@ function renderLobbyLists(){
     roomsListEl.innerHTML = '<div class="lobbyItem">Aucune room ouverte.</div>';
   } else {
     for(const room of onlineState.rooms){
-      const item = document.createElement('div');
-      item.className = `lobbyItem${room.count < 2 ? ' joinable' : ''}`;
+      const isJoinable = room.count < 2;
+      const isSelected = onlineState.selectedJoinRoomId === room.id;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `lobbyItem${isJoinable ? ' joinable' : ''}${isSelected ? ' selected' : ''}`;
+      item.disabled = !isJoinable;
       item.innerHTML = `<strong>${room.id}</strong><span class="lobbyBadge">${room.count}/2</span>`;
-      if(room.count < 2){
+      if(isJoinable){
         item.addEventListener('click', ()=>{
+          onlineState.selectedJoinRoomId = room.id;
           roomIdEl.value = room.id;
+          renderLobbyLists();
+          updateLobbyControls();
           statusEl.textContent = `Room selectionnee: ${room.id}. Cliquez sur "Joindre room".`;
         });
       }
@@ -1380,16 +1392,24 @@ function renderLobbyLists(){
 }
 function updateLobbyControls(){
   const onlineMode = isOnlineMode();
+  const hasSelectedRoom = !!onlineState.selectedJoinRoomId && onlineState.rooms.some((room) => room.id === onlineState.selectedJoinRoomId && room.count < 2);
   connectOnlineBtn.disabled = !onlineMode || onlineState.connected;
   createRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
-  joinRoomBtn.disabled = !onlineMode || !onlineState.connected;
+  joinRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom || !hasSelectedRoom;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
   startRoomBtn.textContent = onlineMode && onlineState.winner ? 'Rejouer' : 'Lancer partie';
-  startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
+  startBtn.textContent = onlineMode ? (onlineState.connected ? 'Connecte' : 'Connecter') : 'Jouer';
 }
 function applyLobbySnapshot(snapshot){
   onlineState.connectedUsers = snapshot.connectedUsers || [];
   onlineState.rooms = snapshot.rooms || [];
+  if(onlineState.selectedJoinRoomId){
+    const selectedRoom = onlineState.rooms.find((room) => room.id === onlineState.selectedJoinRoomId && room.count < 2);
+    if(!selectedRoom){
+      onlineState.selectedJoinRoomId = '';
+      if(!onlineState.inRoom) roomIdEl.value = '';
+    }
+  }
   const currentRoom = onlineState.roomId ? onlineState.rooms.find((room) => room.id === onlineState.roomId) : null;
   if(currentRoom) onlineState.waiting = currentRoom.count < 2;
   renderLobbyLists();
@@ -1698,6 +1718,7 @@ function connectOnlineLobby(){
   const requestedName = playerNameEl.value.trim();
   onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
   onlineState.waiting = true;
+  onlineState.selectedJoinRoomId = '';
   onlineState.lastFrameAt = 0;
   onlineState.lastInputSentAt = 0;
   onlineState.lastInputPayload = null;
@@ -1725,6 +1746,7 @@ function connectOnlineLobby(){
     } else if(payload.type === 'room_status'){
       applyRoomStatus(payload);
     } else if(payload.type === 'room_joined'){
+      onlineState.selectedJoinRoomId = payload.roomId || '';
       onlineState.role = payload.role;
       onlineState.roomId = payload.roomId;
       onlineState.inRoom = true;
@@ -2267,7 +2289,7 @@ function resetBall(towardsP2=true, { delayMs = SERVE_DELAY_MS, speedFactor = SER
 }
 function startGame(){
   if(isOnlineMode()){
-    openOnlineLobbyModal();
+    connectOnlineLobby();
     return;
   }
   ensureAudioContext();
@@ -2313,14 +2335,14 @@ joinRoomBtn.addEventListener('click', ()=>{
     statusEl.textContent = 'Vous etes deja dans une room.';
     return;
   }
-  if(!roomIdEl.value.trim()){
-    statusEl.textContent = 'Entrez ou selectionnez un code de room.';
+  if(!onlineState.selectedJoinRoomId){
+    statusEl.textContent = 'Selectionnez une room disponible avant de rejoindre.';
     return;
   }
   const requestedName = playerNameEl.value.trim();
   sendOnlineMessage({
     type: 'join_room',
-    roomId: roomIdEl.value.trim() || 'public',
+    roomId: onlineState.selectedJoinRoomId,
     playerName: (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName
   });
 });

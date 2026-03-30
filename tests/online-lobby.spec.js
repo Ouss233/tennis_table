@@ -18,6 +18,65 @@ async function getBackgroundStyle(page) {
   return page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage);
 }
 
+async function openLocalTwoPlayerGame(page) {
+  await page.goto('/jeux_ping_pong.html');
+  await page.locator('#gameMode').selectOption('two');
+  await page.getByRole('button', { name: 'Jouer' }).click();
+  await expect(page.locator('#gameContainer')).toHaveClass(/playing/);
+}
+
+async function recordMotionSamples(page, key, durationMs = 420, sampleIntervalMs = 35) {
+  const samples = [];
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) <= durationMs) {
+    const state = await getTestState(page);
+    samples.push({
+      elapsedMs: Date.now() - startedAt,
+      playerY: state.playerY
+    });
+    await page.waitForTimeout(sampleIntervalMs);
+  }
+  return samples;
+}
+
+function analyzeMotion(samples) {
+  const origin = samples[0]?.playerY ?? 0;
+  let firstResponseMs = null;
+  let maxJump = 0;
+  let totalTravel = 0;
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const delta = Math.abs(current.playerY - previous.playerY);
+    maxJump = Math.max(maxJump, delta);
+    totalTravel = Math.max(totalTravel, Math.abs(current.playerY - origin));
+    if (firstResponseMs === null && Math.abs(current.playerY - origin) >= 3) {
+      firstResponseMs = current.elapsedMs;
+    }
+  }
+  return {
+    firstResponseMs: firstResponseMs ?? Number.POSITIVE_INFINITY,
+    maxJump,
+    totalTravel
+  };
+}
+
+async function captureMotionWhileHolding({ actionPage, observedPage, key = 'w', durationMs = 420 }) {
+  await actionPage.locator('#game').click();
+  const samplingPromise = recordMotionSamples(observedPage, key, durationMs + 260);
+  await actionPage.keyboard.down(key);
+  await actionPage.waitForTimeout(durationMs);
+  await actionPage.keyboard.up(key);
+  return analyzeMotion(await samplingPromise);
+}
+
+async function waitForPaddleSync(pageA, pageB, tolerance = 14) {
+  await expect.poll(async () => {
+    const [stateA, stateB] = await Promise.all([getTestState(pageA), getTestState(pageB)]);
+    return Math.abs(stateA.playerY - stateB.playerY);
+  }).toBeLessThanOrEqual(tolerance);
+}
+
 async function createStartedOnlineMatch(browser, {
   roomId = `room-${Date.now()}`,
   hostName = 'Host Player',
@@ -180,6 +239,35 @@ test.describe('Online Lobby', () => {
     await expect(hostPage.locator('#scoreLabel')).toContainText('0');
     await expect(guestPage.locator('#scoreLabel')).toContainText('0');
 
+    await contextOne.close();
+    await contextTwo.close();
+  });
+
+  test('keeps remote two-player movement responsive and smooth compared with local play', async ({ browser }) => {
+    const localContext = await browser.newContext();
+    const localPage = await localContext.newPage();
+    await openLocalTwoPlayerGame(localPage);
+
+    const localMotion = await captureMotionWhileHolding({
+      actionPage: localPage,
+      observedPage: localPage
+    });
+
+    const { contextOne, contextTwo, hostPage, guestPage } = await createStartedOnlineMatch(browser, {
+      roomId: `motion-${Date.now()}`
+    });
+    await waitForPaddleSync(hostPage, guestPage);
+
+    const onlineMotion = await captureMotionWhileHolding({
+      actionPage: hostPage,
+      observedPage: guestPage
+    });
+
+    expect(onlineMotion.firstResponseMs).toBeLessThanOrEqual(localMotion.firstResponseMs + 160);
+    expect(onlineMotion.maxJump).toBeLessThanOrEqual(Math.max(localMotion.maxJump + 18, 26));
+    expect(onlineMotion.totalTravel).toBeGreaterThan(localMotion.totalTravel * 0.7);
+
+    await localContext.close();
     await contextOne.close();
     await contextTwo.close();
   });

@@ -1134,6 +1134,8 @@ const onlineState = {
   lastInputPayload: null,
   lastFrameAt: 0
 };
+const ONLINE_FRAME_MS = 1000 / 60;
+const ONLINE_EXTRAPOLATION_MAX_FRAMES = 3;
 
 const difficultySettings = {
   easy:{cpuSpeed:3.5,deadZone:38,reactMs:250,aimError:54},
@@ -1432,17 +1434,60 @@ function syncOnlineExtraBalls(ballsSnapshot, scaleX, scaleY){
   }
   extraBalls = nextExtraBalls;
 }
-function reconcileOnlinePaddle(paddle, target, blend = 0.22){
+function estimateOnlineVelocity(previousTarget, nextValue, updatedAt){
+  if(!previousTarget || !previousTarget.updatedAt) return 0;
+  const elapsedFrames = Math.max(1, (updatedAt - previousTarget.updatedAt) / ONLINE_FRAME_MS);
+  return (nextValue - previousTarget.value) / elapsedFrames;
+}
+function createOnlinePaddleTarget(previousTarget, paddleSnapshot, scaleX, scaleY, updatedAt){
+  const y = paddleSnapshot.y * scaleY;
+  return {
+    x: paddleSnapshot.x * scaleX,
+    y,
+    w: paddleSnapshot.w * scaleX,
+    h: paddleSnapshot.h * scaleY,
+    speed: (paddleSnapshot.speed || 0) * scaleY,
+    vy: estimateOnlineVelocity(previousTarget ? { value: previousTarget.y, updatedAt: previousTarget.updatedAt } : null, y, updatedAt),
+    updatedAt
+  };
+}
+function createOnlineBallTarget(previousTarget, ballSnapshot, scaleX, scaleY, updatedAt){
+  const x = ballSnapshot.x * scaleX;
+  const y = ballSnapshot.y * scaleY;
+  return {
+    x,
+    y,
+    vx: ballSnapshot.vx * scaleX,
+    vy: ballSnapshot.vy * scaleY,
+    r: ballSnapshot.r * Math.min(scaleX, scaleY),
+    dx: estimateOnlineVelocity(previousTarget ? { value: previousTarget.x, updatedAt: previousTarget.updatedAt } : null, x, updatedAt),
+    dy: estimateOnlineVelocity(previousTarget ? { value: previousTarget.y, updatedAt: previousTarget.updatedAt } : null, y, updatedAt),
+    updatedAt
+  };
+}
+function getOnlineTargetAgeFrames(target){
+  if(!target?.updatedAt) return 0;
+  return Math.min(ONLINE_EXTRAPOLATION_MAX_FRAMES, Math.max(0, (performance.now() - target.updatedAt) / ONLINE_FRAME_MS));
+}
+function reconcileOnlinePaddle(paddle, target){
   if(!target) return;
   paddle.x = target.x;
   paddle.w = target.w;
   paddle.h = target.h;
-  if(Math.abs(target.y - paddle.y) > paddle.h * 0.85){
-    paddle.y = target.y;
+  const ageFrames = getOnlineTargetAgeFrames(target);
+  const predictedY = target.y + (target.vy || 0) * ageFrames;
+  const distance = predictedY - paddle.y;
+  const maxStep = Math.max(2, (target.speed || paddle.speed || 7) * (1.05 + (ageFrames * 0.55)));
+  if(Math.abs(distance) > H * 0.45){
+    paddle.y = predictedY;
     return;
   }
-  paddle.y += (target.y - paddle.y) * blend;
-  if(Math.abs(target.y - paddle.y) < 0.35) paddle.y = target.y;
+  if(Math.abs(distance) <= maxStep){
+    paddle.y = predictedY;
+  } else {
+    paddle.y += Math.sign(distance) * maxStep;
+  }
+  if(Math.abs(predictedY - paddle.y) < 0.35) paddle.y = predictedY;
 }
 function advanceOnlineBall(frameScale){
   if(!running) return;
@@ -1456,20 +1501,23 @@ function advanceOnlineBall(frameScale){
     ball.vy = -Math.abs(ball.vy);
   }
 }
-function reconcileOnlineBall(target, blend = 0.18){
+function reconcileOnlineBall(target){
   if(!target) return;
   ball.r = target.r;
   ball.vx = target.vx;
   ball.vy = target.vy;
-  if(Math.abs(target.x - ball.x) > W * 0.18 || Math.abs(target.y - ball.y) > H * 0.18){
-    ball.x = target.x;
-    ball.y = target.y;
+  const ageFrames = getOnlineTargetAgeFrames(target);
+  const predictedX = target.x + (target.vx * ageFrames);
+  const predictedY = target.y + (target.vy * ageFrames);
+  if(Math.abs(predictedX - ball.x) > W * 0.14 || Math.abs(predictedY - ball.y) > H * 0.14){
+    ball.x = predictedX;
+    ball.y = predictedY;
     return;
   }
-  ball.x += (target.x - ball.x) * blend;
-  ball.y += (target.y - ball.y) * blend;
-  if(Math.abs(target.x - ball.x) < 0.35) ball.x = target.x;
-  if(Math.abs(target.y - ball.y) < 0.35) ball.y = target.y;
+  ball.x += (predictedX - ball.x) * 0.34;
+  ball.y += (predictedY - ball.y) * 0.34;
+  if(Math.abs(predictedX - ball.x) < 0.35) ball.x = predictedX;
+  if(Math.abs(predictedY - ball.y) < 0.35) ball.y = predictedY;
 }
 function stepLocalOnlinePaddle(frameScale){
   const localRole = onlineState.role;
@@ -1512,12 +1560,7 @@ function applyOnlineSnapshot(snapshot){
   cpuScore = snapshot.score?.p2 ?? 0;
 
   if(snapshot.paddles?.p1){
-    onlineState.targets.p1 = {
-      x: snapshot.paddles.p1.x * scaleX,
-      y: snapshot.paddles.p1.y * scaleY,
-      w: snapshot.paddles.p1.w * scaleX,
-      h: snapshot.paddles.p1.h * scaleY
-    };
+    onlineState.targets.p1 = createOnlinePaddleTarget(onlineState.targets.p1, snapshot.paddles.p1, scaleX, scaleY, performance.now());
     if(!onlineState.lastFrameAt){
       player.x = onlineState.targets.p1.x;
       player.y = onlineState.targets.p1.y;
@@ -1527,12 +1570,7 @@ function applyOnlineSnapshot(snapshot){
   }
 
   if(snapshot.paddles?.p2){
-    onlineState.targets.p2 = {
-      x: snapshot.paddles.p2.x * scaleX,
-      y: snapshot.paddles.p2.y * scaleY,
-      w: snapshot.paddles.p2.w * scaleX,
-      h: snapshot.paddles.p2.h * scaleY
-    };
+    onlineState.targets.p2 = createOnlinePaddleTarget(onlineState.targets.p2, snapshot.paddles.p2, scaleX, scaleY, performance.now());
     if(!onlineState.lastFrameAt){
       cpu.x = onlineState.targets.p2.x;
       cpu.y = onlineState.targets.p2.y;
@@ -1543,13 +1581,7 @@ function applyOnlineSnapshot(snapshot){
 
   if(snapshot.ball){
     const primaryBall = Array.isArray(snapshot.balls) && snapshot.balls.length ? snapshot.balls[0] : snapshot.ball;
-    onlineState.targets.ball = {
-      x: primaryBall.x * scaleX,
-      y: primaryBall.y * scaleY,
-      vx: primaryBall.vx * scaleX,
-      vy: primaryBall.vy * scaleY,
-      r: primaryBall.r * Math.min(scaleX, scaleY)
-    };
+    onlineState.targets.ball = createOnlineBallTarget(onlineState.targets.ball, primaryBall, scaleX, scaleY, performance.now());
     if(!onlineState.lastFrameAt){
       ball.x = onlineState.targets.ball.x;
       ball.y = onlineState.targets.ball.y;

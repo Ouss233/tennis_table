@@ -3,6 +3,8 @@ import { test, expect } from '@playwright/test';
 async function openOnlineLobby(page, playerName) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('online');
+  await page.getByRole('button', { name: 'Lobby online' }).click();
+  await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeVisible();
   await expect(page.locator('#playerName')).toBeVisible();
   await page.locator('#playerName').fill(playerName);
   await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
@@ -116,16 +118,17 @@ async function createStartedOnlineMatch(browser, {
 }
 
 test.describe('Online Lobby', () => {
-  test('connects directly from the main online action without opening the lobby dialog', async ({ page }) => {
+  test('opens the online lobby dialog and connects directly from its connect button', async ({ page }) => {
     await page.goto('/jeux_ping_pong.html');
     await page.locator('#gameMode').selectOption('online');
+    await page.getByRole('button', { name: 'Lobby online' }).click();
+    await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeVisible();
     await page.locator('#playerName').fill('Direct Player');
     await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
-
-    await page.locator('#startBtn').click();
+    await page.locator('#connectOnlineBtn').click();
 
     await expect(page.locator('#connectionText')).toContainText('connecte au serveur');
-    await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeHidden();
+    await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeVisible();
   });
 
   test('connects to the local websocket lobby', async ({ page }) => {

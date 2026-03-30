@@ -1262,7 +1262,9 @@ function closeOnlineLobbyModal(){
   onlineLobbyModal.setAttribute('aria-hidden', 'true');
 }
 function mountOnlineControlsIntoLobby(){
-  onlineLobbyBodyEl.innerHTML = '<p class="lobbyIntro">Le lobby online est integre directement au menu principal.</p>';
+  document.querySelectorAll('.onlineOnly').forEach((element) => {
+    onlineLobbyBodyEl.appendChild(element);
+  });
 }
 function updateConnectionState(state, text){
   connectionDotEl.classList.remove('connected', 'connecting');
@@ -1398,7 +1400,7 @@ function updateLobbyControls(){
   joinRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom || !hasSelectedRoom;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
   startRoomBtn.textContent = onlineMode && onlineState.winner ? 'Rejouer' : 'Lancer partie';
-  startBtn.textContent = onlineMode ? (onlineState.connected ? 'Connecte' : 'Connecter') : 'Jouer';
+  startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
 }
 function applyLobbySnapshot(snapshot){
   onlineState.connectedUsers = snapshot.connectedUsers || [];
@@ -2289,7 +2291,7 @@ function resetBall(towardsP2=true, { delayMs = SERVE_DELAY_MS, speedFactor = SER
 }
 function startGame(){
   if(isOnlineMode()){
-    connectOnlineLobby();
+    openOnlineLobbyModal();
     return;
   }
   ensureAudioContext();

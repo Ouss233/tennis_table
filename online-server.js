@@ -14,6 +14,7 @@ const POWER_UP_VISIBLE_DURATION_MS = 30000;
 const MAX_POWER_UPS_ON_TABLE = 2;
 const SERVE_SPEED_FACTOR = 0.76;
 const SERVE_DELAY_MS = 950;
+const ALLOW_TEST_COMMANDS = process.env.ALLOW_TEST_COMMANDS === '1';
 
 const rooms = new Map();
 const clients = new Map();
@@ -89,6 +90,7 @@ function createRoom(id) {
     waitingForServe: true,
     serveResumeAt: Date.now() + SERVE_DELAY_MS,
     running: false,
+    paused: false,
     winner: null,
     pointsToWin: MAX_SCORE_DEFAULT
   };
@@ -150,6 +152,7 @@ function resetRoomState(room, serveDirection = 1, { delayMs = SERVE_DELAY_MS, sp
   room.waitingForServe = true;
   room.serveResumeAt = Date.now() + delayMs;
   room.winner = null;
+  room.paused = false;
   room.running = roomPlayerCount(room) === 2;
 }
 
@@ -193,6 +196,7 @@ function serializeRoom(room) {
     waitingForServe: !!room.waitingForServe,
     serveCountdownMs: Math.max(0, (room.serveResumeAt || 0) - now),
     running: room.running,
+    paused: !!room.paused,
     winner: room.winner,
     waitingForOpponent: roomPlayerCount(room) < 2,
     pointsToWin: room.pointsToWin,
@@ -362,6 +366,32 @@ function startRoomGame(ws, payload) {
   room.pointsToWin = clamp(parseInt(payload.pointsToWin || MAX_SCORE_DEFAULT, 10) || MAX_SCORE_DEFAULT, 1, 15);
   resetRoomState(room, Math.random() > 0.5 ? 1 : -1);
   notifyRoom(room, 'La partie commence.');
+  broadcastRoom(room);
+}
+
+function setRoomPaused(ws, shouldPause) {
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room || !room.running || room.winner) return;
+  room.paused = !!shouldPause;
+  notifyRoom(room, room.paused ? 'Partie en pause.' : 'Partie reprise.');
+  broadcastRoom(room);
+}
+
+function forceWinnerForTests(ws, winner) {
+  if (!ALLOW_TEST_COMMANDS) return;
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room) return;
+  const normalizedWinner = winner === 'p2' ? 'p2' : 'p1';
+  room.score[normalizedWinner] = room.pointsToWin;
+  room.winner = normalizedWinner;
+  room.running = false;
+  room.paused = false;
+  room.waitingForServe = false;
+  notifyRoom(room, `Test: victoire forcee pour ${room.names[normalizedWinner] || normalizedWinner}.`);
   broadcastRoom(room);
 }
 
@@ -607,6 +637,7 @@ function handlePaddleBounce(ball, paddle, direction) {
 
 function tickRoom(room) {
   if (roomPlayerCount(room) < 2 || !room.running || room.winner) return;
+  if (room.paused) return;
 
   applyActiveEffects(room);
   updatePaddle(room.paddles.p1, room.inputs.p1);
@@ -703,6 +734,21 @@ wss.on('connection', (ws) => {
 
     if (payload.type === 'start_game') {
       startRoomGame(ws, payload);
+      return;
+    }
+
+    if (payload.type === 'pause_game') {
+      setRoomPaused(ws, true);
+      return;
+    }
+
+    if (payload.type === 'resume_game') {
+      setRoomPaused(ws, false);
+      return;
+    }
+
+    if (payload.type === 'test_force_winner') {
+      forceWinnerForTests(ws, payload.winner);
       return;
     }
 

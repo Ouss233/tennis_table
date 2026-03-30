@@ -18,7 +18,7 @@ export default defineConfig({
       timeout: 30_000
     },
     {
-      command: 'npm start',
+      command: 'ALLOW_TEST_COMMANDS=1 npm start',
       port: 8080,
       reuseExistingServer: true,
       timeout: 30_000

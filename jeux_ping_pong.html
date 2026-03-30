@@ -1118,6 +1118,8 @@ const onlineState = {
   playerName: 'Player 1',
   names: { p1: 'Player 1', p2: 'Player 2' },
   waiting: false,
+  paused: false,
+  winner: null,
   lastWinner: null,
   inRoom: false,
   isHost: false,
@@ -1281,6 +1283,12 @@ function toggleMenuPanel(force){
 function isOnlineMode(){
   return gameModeEl.value === 'online';
 }
+function canReplayOnlineGame(){
+  return isOnlineMode() && onlineState.inRoom && onlineState.isHost && !!onlineState.winner;
+}
+function syncPauseButtonLabel(){
+  pauseBtn.textContent = paused ? 'Reprendre' : 'Pause';
+}
 function getPlayerLabels(){
   if(isOnlineMode()) return onlineState.names;
   return gameModeEl.value === 'two'
@@ -1297,6 +1305,8 @@ function disconnectOnlineSession(){
   onlineState.role = null;
   onlineState.roomId = '';
   onlineState.waiting = false;
+  onlineState.paused = false;
+  onlineState.winner = null;
   onlineState.names = { p1: 'Player 1', p2: 'Player 2' };
   onlineState.lastWinner = null;
   onlineState.inRoom = false;
@@ -1372,6 +1382,7 @@ function updateLobbyControls(){
   createRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
   joinRoomBtn.disabled = !onlineMode || !onlineState.connected;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
+  startRoomBtn.textContent = onlineMode && onlineState.winner ? 'Rejouer' : 'Lancer partie';
   startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
 }
 function applyLobbySnapshot(snapshot){
@@ -1468,9 +1479,14 @@ function updateOnlineFrame(){
 }
 function applyOnlineSnapshot(snapshot){
   if(!snapshot) return;
+  const wasRunning = running;
+  const wasPaused = paused;
+  const hadWinner = !!onlineState.winner;
   onlineState.inRoom = true;
   onlineState.names = snapshot.names || onlineState.names;
   onlineState.waiting = !!snapshot.waitingForOpponent;
+  onlineState.paused = !!snapshot.paused;
+  onlineState.winner = snapshot.winner || null;
   pointsToWin = snapshot.pointsToWin || pointsToWin;
   pointsToWinEl.value = String(pointsToWin);
   const fieldWidth = snapshot.field?.width || 840;
@@ -1563,26 +1579,37 @@ function applyOnlineSnapshot(snapshot){
     : [];
 
   running = !!snapshot.running;
-  setPlayingUI(!!snapshot.running || !!snapshot.winner);
-  if(snapshot.running || snapshot.winner){
+  paused = !!snapshot.paused;
+  gameOver = !!snapshot.winner;
+  pauseBtn.hidden = !(snapshot.running || snapshot.paused);
+  syncPauseButtonLabel();
+  setPlayingUI(!!snapshot.running || !!snapshot.winner || !!snapshot.paused);
+  if(snapshot.running && !snapshot.paused && (!wasRunning && !wasPaused || hadWinner)){
     gameContainer.classList.remove('menuOpen');
   }
   if(snapshot.winner){
     running = false;
-    gameOver = false;
     if(onlineState.lastWinner !== snapshot.winner){
       showAnnouncement(snapshot.names?.[snapshot.winner] || (snapshot.winner === 'p1' ? 'Player 1' : 'Player 2'), `Score final ${playerScore} - ${cpuScore}`, 'victory', 2200);
     }
     onlineState.lastWinner = snapshot.winner;
     statusEl.textContent = `${snapshot.names?.[snapshot.winner] || snapshot.winner} a gagne.`;
+    showOverlay('onlineEnd', { winner: snapshot.winner, canReplay: onlineState.isHost });
   } else if(snapshot.waitingForOpponent){
     onlineState.lastWinner = null;
+    hideOverlay();
     statusEl.textContent = 'En attente d’un autre joueur...';
+  } else if(snapshot.paused){
+    onlineState.lastWinner = null;
+    hideOverlay();
+    statusEl.textContent = 'Partie en pause.';
   } else if(snapshot.waitingForServe){
     onlineState.lastWinner = null;
+    hideOverlay();
     statusEl.textContent = `Service dans ${Math.max(1, Math.ceil((snapshot.serveCountdownMs || 0) / 1000))}...`;
   } else {
     onlineState.lastWinner = null;
+    hideOverlay();
     statusEl.textContent = `${onlineState.names.p1} vs ${onlineState.names.p2}`;
   }
 
@@ -1655,6 +1682,8 @@ function connectOnlineLobby(){
       onlineState.inRoom = true;
       onlineState.isHost = !!payload.isHost;
       onlineState.waiting = !!payload.waitingForOpponent;
+      onlineState.paused = false;
+      onlineState.winner = null;
       onlineState.names = payload.names || onlineState.names;
       setPlayingUI(false);
       pauseBtn.hidden = true;
@@ -1662,6 +1691,10 @@ function connectOnlineLobby(){
       resetTrails();
       clearOnlineVisualState();
       running = false;
+      paused = false;
+      gameOver = false;
+      syncPauseButtonLabel();
+      hideOverlay();
       updatePlayerBanners();
       updateScoreLabel();
       updateBonusSideLabels();
@@ -2206,7 +2239,7 @@ function startGame(){
   duplicatePowerUpSpawned = false;
   lastHit = 'p1'; gameOver=false; running = true; paused=false; menuOpenedBySystemPause = false; overlay.classList.remove('overlayVisible');
   resetAllBonusEffects();
-  pauseBtn.textContent = 'Pause';
+  syncPauseButtonLabel();
   applyDifficulty(); resetBall(true, { delayMs: 1100, speedFactor: 0.72, announce: false }); clearPowerUps(); initObstacles();
   updateScoreLabel();
   updateHighScoresDisplay();
@@ -2260,11 +2293,50 @@ highScoreModal.addEventListener('click', (e)=>{ if(e.target === highScoreModal) 
 rulesModal.addEventListener('click', (e)=>{ if(e.target === rulesModal) closeRulesModal(); });
 onlineLobbyModal.addEventListener('click', (e)=>{ if(e.target === onlineLobbyModal) closeOnlineLobbyModal(); });
 
-function togglePause(){ if(isOnlineMode()) return; if(!running && !paused) return; paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; if(paused) showOverlay('pause'); else hideOverlay(); if(!paused) ensureAudioContext(); }
+function requestOnlineReplay(){
+  if(!canReplayOnlineGame()) return;
+  hideOverlay();
+  sendOnlineMessage({
+    type: 'start_game',
+    pointsToWin: Math.max(1, parseInt(pointsToWinEl.value, 10) || 3)
+  });
+}
+function togglePause(){
+  if(isOnlineMode()){
+    if((!running && !paused) || !!onlineState.winner) return;
+    sendOnlineMessage({ type: paused ? 'resume_game' : 'pause_game' });
+    return;
+  }
+  if(!running && !paused) return;
+  paused = !paused;
+  syncPauseButtonLabel();
+  if(paused) showOverlay('pause'); else hideOverlay();
+  if(!paused) ensureAudioContext();
+}
 pauseBtn.addEventListener('click', togglePause);
 menuToggleBtn.addEventListener('click', ()=>{ toggleMenuPanel(); });
 
-function showOverlay(mode, opts){ overlay.classList.add('overlayVisible'); overlayBox.innerHTML = ''; if(mode === 'pause'){ overlayBox.innerHTML = `<div class="winnerTitle">Paused</div><div class="winnerSub">Press Resume or P to continue</div><div class="overlayButtons"><button class="btnPrimary" onclick="togglePause()">Resume</button><button class="btnAlt" onclick="startGame()">Restart</button><button class="btnAlt" id="overlayMenuBtn">Menu</button></div>`; document.getElementById('overlayMenuBtn').addEventListener('click', ()=>{ hideOverlay(); toggleMenuPanel(true); }); } else if(mode === 'end'){ const winnerLabel = opts && opts.winner === 'p1' ? (gameModeEl.value === 'two' ? 'Player 1 wins!' : 'You win!') : (gameModeEl.value === 'two' ? 'Player 2 wins!' : 'CPU wins!'); const subtitle = `Final score ${playerScore} : ${cpuScore}`; overlayBox.innerHTML = `<div class="winnerTitle">${winnerLabel}</div><div class="winnerSub">${subtitle}</div><div class="overlayButtons"><button class="btnPrimary" id="overlayRestart">Restart</button><button class="btnAlt" id="overlayShowHS">Show High Scores</button></div><div id="hsPanel" style="display:none"></div>`; document.getElementById('overlayRestart').addEventListener('click', ()=>{ hideOverlay(); startGame(); }); document.getElementById('overlayShowHS').addEventListener('click', ()=>{ toggleHSPanel(); }); } }
+function showOverlay(mode, opts){
+  overlay.classList.add('overlayVisible');
+  overlayBox.innerHTML = '';
+  if(mode === 'pause'){
+    overlayBox.innerHTML = `<div class="winnerTitle">Paused</div><div class="winnerSub">Press Resume or P to continue</div><div class="overlayButtons"><button class="btnPrimary" onclick="togglePause()">Resume</button><button class="btnAlt" onclick="startGame()">Restart</button><button class="btnAlt" id="overlayMenuBtn">Menu</button></div>`;
+    document.getElementById('overlayMenuBtn').addEventListener('click', ()=>{ hideOverlay(); toggleMenuPanel(true); });
+  } else if(mode === 'end'){
+    const winnerLabel = opts && opts.winner === 'p1' ? (gameModeEl.value === 'two' ? 'Player 1 wins!' : 'You win!') : (gameModeEl.value === 'two' ? 'Player 2 wins!' : 'CPU wins!');
+    const subtitle = `Final score ${playerScore} : ${cpuScore}`;
+    overlayBox.innerHTML = `<div class="winnerTitle">${winnerLabel}</div><div class="winnerSub">${subtitle}</div><div class="overlayButtons"><button class="btnPrimary" id="overlayRestart">Restart</button><button class="btnAlt" id="overlayShowHS">Show High Scores</button></div><div id="hsPanel" style="display:none"></div>`;
+    document.getElementById('overlayRestart').addEventListener('click', ()=>{ hideOverlay(); startGame(); });
+    document.getElementById('overlayShowHS').addEventListener('click', ()=>{ toggleHSPanel(); });
+  } else if(mode === 'onlineEnd'){
+    const winnerName = getPlayerLabels()[opts?.winner] || opts?.winner || 'Player';
+    const replayDisabledAttr = opts?.canReplay ? '' : ' disabled';
+    const replayHint = opts?.canReplay ? 'L’hote peut relancer immediatement la partie.' : 'Seul l’hote peut relancer la partie.';
+    overlayBox.innerHTML = `<div class="winnerTitle">${winnerName} a gagne !</div><div class="winnerSub">Score final ${playerScore} : ${cpuScore}</div><div class="winnerSub">${replayHint}</div><div class="overlayButtons"><button class="btnPrimary" id="overlayReplayOnline"${replayDisabledAttr}>Rejouer</button><button class="btnAlt" id="overlayMenuBtn">Menu</button></div>`;
+    document.getElementById('overlayReplayOnline').addEventListener('click', requestOnlineReplay);
+    document.getElementById('overlayMenuBtn').addEventListener('click', ()=>{ hideOverlay(); toggleMenuPanel(true); });
+  }
+}
 function hideOverlay(){ overlay.classList.remove('overlayVisible'); const hs = document.getElementById('hsPanel'); if(hs) hs.style.display = 'none'; }
 function toggleHSPanel(){ let hs = document.getElementById('hsPanel'); if(!hs) return; if(hs.style.display === 'block'){ hs.style.display = 'none'; return; } const s = readHighScores(); hs.innerHTML = `<div style="font-weight:600;margin-bottom:6px">High Scores & Stats</div><div>Best Player Score: ${s.bestP}</div><div>Best CPU Score: ${s.bestC}</div><div>Your wins: ${s.wins}</div><div>Games played: ${s.total}</div><div style="margin-top:8px"><button class="btnAlt" id="overlayCloseHS">Close</button></div>`; hs.style.display = 'block'; document.getElementById('overlayCloseHS').addEventListener('click', ()=>{ hs.style.display='none'; }); }
 
@@ -2469,7 +2541,7 @@ function draw(){
     ctx.arc(activeBall.x, activeBall.y, activeBall.r, 0, Math.PI*2);
     ctx.fill();
   }
-  overlay.style.display = (paused || gameOver) ? 'flex' : 'none';
+  overlay.style.display = overlay.classList.contains('overlayVisible') ? 'flex' : 'none';
 }
 
 function loop(){ update(); draw(); renderActiveBonusEffects(); requestAnimationFrame(loop); }
@@ -2509,6 +2581,16 @@ pointsToWinEl.addEventListener('input', updateCompactSummary);
 window.addEventListener('load', ()=>{ ball.x = W/2; ball.y = H/2; extraBalls = []; mountOnlineControlsIntoLobby(); setModeSpecificControls(); updateConnectionState('idle', 'Etat: non connecte'); updateHighScoresDisplay(); applyDifficulty(); initObstacles(); scheduleNextPowerUp(); updateScoreLabel(); updateBonusSideLabels(); renderActiveBonusEffects(); setPlayingUI(false); pauseBtn.hidden = true; statusEl.textContent = 'Pret.'; });
 
 window.__pongTestApi = {
+  forceOnlineWinner(winner = 'p1'){
+    if(!isOnlineMode() || !onlineState.connected || !onlineState.inRoom) return false;
+    sendOnlineMessage({ type: 'test_force_winner', winner });
+    return true;
+  },
+  requestOnlineReplay(){
+    if(!canReplayOnlineGame()) return false;
+    requestOnlineReplay();
+    return true;
+  },
   getState(){
     return {
       mode: gameModeEl.value,
@@ -2519,6 +2601,9 @@ window.__pongTestApi = {
       connected: onlineState.connected,
       inRoom: onlineState.inRoom,
       waiting: onlineState.waiting,
+      onlinePaused: onlineState.paused,
+      onlineWinner: onlineState.winner,
+      isHost: onlineState.isHost,
       role: onlineState.role,
       roomId: onlineState.roomId,
       obstacleCount: obstacles.length,

@@ -44,4 +44,29 @@ test.describe('Smoke and Main Navigation', () => {
     await expect(page.locator('#scoreLabel')).toContainText('P1');
     await expect(page.locator('#scoreLabel')).toContainText('P2');
   });
+
+  test('end-of-game overlay uses menu-styled actions and its menu/replay buttons work', async ({ page }) => {
+    await openGame(page);
+
+    await page.locator('#pointsToWin').fill('1');
+    await page.getByRole('button', { name: 'Jouer' }).click();
+    await page.evaluate(() => window.__pongTestApi.forceOfflineWinner('p1'));
+
+    await expect(page.locator('#overlay')).toHaveClass(/overlayVisible/);
+    await expect(page.locator('#overlayReplayLocal')).toBeVisible();
+    await expect(page.locator('#overlayReplayLocal')).toHaveClass(/menuAction/);
+    await expect(page.locator('#overlayMenuBtn')).toHaveClass(/menuAction/);
+
+    await page.locator('#overlayMenuBtn').click();
+
+    await expect(page.locator('#gameContainer')).not.toHaveClass(/playing/);
+    await expect(page.getByRole('button', { name: 'Jouer' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Jouer' }).click();
+    await page.evaluate(() => window.__pongTestApi.forceOfflineWinner('p1'));
+    await page.locator('#overlayReplayLocal').click();
+
+    await expect(page.locator('#gameContainer')).toHaveClass(/playing/);
+    await expect(page.locator('#overlay')).not.toHaveClass(/overlayVisible/);
+  });
 });

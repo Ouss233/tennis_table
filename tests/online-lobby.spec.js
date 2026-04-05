@@ -332,14 +332,25 @@ test.describe('Online Lobby', () => {
     await expect(guestPage.locator('#overlayReplayOnline')).toBeDisabled();
     await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe('p1');
     await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe('p1');
+    await expect(hostPage.locator('#overlayReplayOnline')).toHaveClass(/menuAction/);
+    await expect(hostPage.locator('#overlayMenuBtn')).toHaveClass(/menuAction/);
 
-    await hostPage.evaluate(() => window.__pongTestApi.requestOnlineReplay());
+    await hostPage.locator('#overlayReplayOnline').click();
 
+    await expect(hostPage.locator('#overlay')).not.toHaveClass(/overlayVisible/);
+    await expect.poll(async () => (await getTestState(hostPage)).playing).toBe(true);
     await expect.poll(async () => (await getTestState(hostPage)).running).toBe(true);
     await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe(null);
     await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe(null);
     await expect(hostPage.locator('#scoreLabel')).toContainText('0');
     await expect(guestPage.locator('#scoreLabel')).toContainText('0');
+
+    await hostPage.evaluate(() => window.__pongTestApi.forceOnlineWinner('p1'));
+    await expect(hostPage.locator('#overlayMenuBtn')).toBeVisible();
+    await hostPage.locator('#overlayMenuBtn').click();
+
+    await expect(hostPage.locator('#gameContainer')).not.toHaveClass(/playing/);
+    await expect(hostPage.getByRole('button', { name: 'Lobby online' })).toBeVisible();
 
     await contextOne.close();
     await contextTwo.close();

@@ -595,13 +595,71 @@
       70%{opacity:1;transform:scale(1)}
       100%{opacity:0;transform:translateY(-12px) scale(1.01)}
     }
-    .overlay{position:absolute;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;pointer-events:none}
+    .overlay{
+      position:absolute;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:22px;
+      background:rgba(7,5,5,0.28);
+      backdrop-filter:blur(6px);
+      pointer-events:none;
+      z-index:14;
+    }
     .overlayVisible{display:flex;pointer-events:auto}
-    .overlayBox{background:rgba(0,0,0,0.72);color:#fff;padding:18px;border-radius:16px;min-width:280px;max-width:88%;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,0.6)}
-    .winnerTitle{font-size:28px;font-weight:700;margin:6px 0;line-height:1.1;animation:pop 700ms ease-out;text-shadow:0 6px 22px rgba(0,0,0,0.6)}
-    .winnerSub{font-size:15px;color:#ffe9b8;margin-bottom:12px}
+    .overlayBox{
+      width:min(100%, 430px);
+      padding:22px;
+      border-radius:22px;
+      border:1px solid rgba(255,245,236,0.12);
+      background:linear-gradient(180deg,rgba(21,12,10,0.95),rgba(14,8,7,0.98));
+      color:#fff8f2;
+      text-align:center;
+      box-shadow:0 28px 70px rgba(0,0,0,0.42);
+      pointer-events:auto;
+    }
+    .overlayPanel{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .winnerTitle{
+      margin:0;
+      font:700 clamp(30px,4vw,40px)/.95 var(--title-font);
+      letter-spacing:.04em;
+      text-transform:uppercase;
+      animation:pop 700ms ease-out;
+      text-shadow:0 6px 22px rgba(0,0,0,0.6);
+    }
+    .winnerSub{
+      font-size:14px;
+      line-height:1.5;
+      color:#ffe9b8;
+      margin:0;
+    }
     @keyframes pop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1);opacity:1}}
-    .overlayButtons{display:flex;gap:10px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+    .overlayButtons{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      margin-top:4px;
+    }
+    .overlayButtons .menuAction{
+      min-height:48px;
+      padding:12px 20px;
+      font-size:20px;
+      clip-path:polygon(6% 0,100% 0,94% 100%,0 100%);
+    }
+    .overlayButtons .menuAction.alt{
+      background:linear-gradient(90deg,rgba(255,255,255,0.14),rgba(255,255,255,0.08));
+      box-shadow:0 12px 24px rgba(0,0,0,0.18);
+    }
+    .menuAction:disabled,.btnPrimary:disabled,.btnAlt:disabled{
+      opacity:.58;
+      cursor:not-allowed;
+      filter:saturate(.55);
+    }
     .btnPrimary{background:#ff6b2d;color:white;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
     .btnAlt{background:rgba(255,255,255,0.12);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer}
     #hsPanel{margin-top:10px;text-align:left;background:rgba(255,255,255,0.04);padding:10px;border-radius:10px;color:#dff6ff;max-height:260px;overflow:auto}
@@ -1105,6 +1163,7 @@ const SERVE_SPEED_FACTOR = 0.76;
 let lastHit = 'p1'; // who last hit the ball: 'p1' (left) or 'p2' (right)
 let menuOpenedBySystemPause = false;
 let announcementTimer = null;
+let overlayRenderState = { mode: '', key: '' };
 const EXPAND_DURATION_MS = 15000;
 const BONUS_EFFECT_DURATION_MS = 15000;
 const POWER_UP_VISIBLE_DURATION_MS = 30000;
@@ -1132,6 +1191,7 @@ const onlineState = {
   paused: false,
   winner: null,
   lastWinner: null,
+  dismissedWinnerOverlay: false,
   inRoom: false,
   isHost: false,
   connectedUsers: [],
@@ -1420,6 +1480,7 @@ function disconnectOnlineSession(){
   onlineState.winner = null;
   onlineState.names = { p1: 'Player 1', p2: 'Player 2' };
   onlineState.lastWinner = null;
+  onlineState.dismissedWinnerOverlay = false;
   onlineState.inRoom = false;
   onlineState.isHost = false;
   onlineState.connectedUsers = [];
@@ -1716,6 +1777,7 @@ function applyOnlineSnapshot(snapshot){
   onlineState.waiting = !!snapshot.waitingForOpponent;
   onlineState.paused = !!snapshot.paused;
   onlineState.winner = snapshot.winner || null;
+  if(!snapshot.winner) onlineState.dismissedWinnerOverlay = false;
   pointsToWin = snapshot.pointsToWin || pointsToWin;
   pointsToWinEl.value = String(pointsToWin);
   const fieldWidth = snapshot.field?.width || 840;
@@ -1796,7 +1858,7 @@ function applyOnlineSnapshot(snapshot){
   gameOver = !!snapshot.winner;
   pauseBtn.hidden = !(snapshot.running || snapshot.paused);
   syncPauseButtonLabel();
-  setPlayingUI(!!snapshot.running || !!snapshot.winner || !!snapshot.paused);
+  setPlayingUI(!!snapshot.running || (!!snapshot.winner && !onlineState.dismissedWinnerOverlay) || !!snapshot.paused);
   if(snapshot.running && !snapshot.paused && (!wasRunning && !wasPaused || hadWinner)){
     gameContainer.classList.remove('menuOpen');
   }
@@ -1807,7 +1869,9 @@ function applyOnlineSnapshot(snapshot){
     }
     onlineState.lastWinner = snapshot.winner;
     statusEl.textContent = `${snapshot.names?.[snapshot.winner] || snapshot.winner} a gagne.`;
-    showOverlay('onlineEnd', { winner: snapshot.winner, canReplay: onlineState.isHost });
+    if(!onlineState.dismissedWinnerOverlay){
+      showOverlay('onlineEnd', { winner: snapshot.winner, canReplay: onlineState.isHost });
+    }
   } else if(snapshot.waitingForOpponent){
     onlineState.lastWinner = null;
     hideOverlay();
@@ -1924,6 +1988,7 @@ function connectOnlineLobby(){
       onlineState.waiting = !!payload.waitingForOpponent;
       onlineState.paused = false;
       onlineState.winner = null;
+      onlineState.dismissedWinnerOverlay = false;
       onlineState.names = payload.names || onlineState.names;
       setPlayingUI(false);
       pauseBtn.hidden = true;
@@ -2544,6 +2609,7 @@ onlineLobbyModal.addEventListener('click', (e)=>{ if(e.target === onlineLobbyMod
 
 function requestOnlineReplay(){
   if(!canReplayOnlineGame()) return;
+  onlineState.dismissedWinnerOverlay = false;
   hideOverlay();
   sendOnlineMessage({
     type: 'start_game',
@@ -2565,28 +2631,69 @@ function togglePause(){
 pauseBtn.addEventListener('click', togglePause);
 menuToggleBtn.addEventListener('click', ()=>{ toggleMenuPanel(); });
 
+function returnToMenuFromOverlay(){
+  if(isOnlineMode() && !!onlineState.winner){
+    onlineState.dismissedWinnerOverlay = true;
+  }
+  hideOverlay();
+  running = false;
+  paused = false;
+  waitingAfterScore = false;
+  gameOver = false;
+  menuOpenedBySystemPause = false;
+  syncPauseButtonLabel();
+  pauseBtn.hidden = true;
+  gameContainer.classList.remove('menuOpen');
+  setPlayingUI(false);
+}
+
 function showOverlay(mode, opts){
+  const overlayKey = JSON.stringify({
+    mode,
+    winner: opts?.winner || null,
+    canReplay: opts?.canReplay ?? null,
+    playerScore,
+    cpuScore,
+    paused,
+    running
+  });
+  if(
+    overlay.classList.contains('overlayVisible') &&
+    overlayRenderState.mode === mode &&
+    overlayRenderState.key === overlayKey
+  ){
+    return;
+  }
+  overlayRenderState = { mode, key: overlayKey };
   overlay.classList.add('overlayVisible');
   overlayBox.innerHTML = '';
   if(mode === 'pause'){
-    overlayBox.innerHTML = `<div class="winnerTitle">Paused</div><div class="winnerSub">Press Resume or P to continue</div><div class="overlayButtons"><button class="btnPrimary" onclick="togglePause()">Resume</button><button class="btnAlt" onclick="startGame()">Restart</button><button class="btnAlt" id="overlayMenuBtn">Menu</button></div>`;
-    document.getElementById('overlayMenuBtn').addEventListener('click', ()=>{ hideOverlay(); toggleMenuPanel(true); });
+    overlayBox.innerHTML = `<div class="overlayPanel"><div class="winnerTitle">Pause</div><p class="winnerSub">Reprenez, relancez la partie ou revenez au menu.</p><div class="overlayButtons"><button class="menuAction resumeAction" id="overlayResumeBtn" type="button">Reprendre</button><button class="menuAction" id="overlayRestartBtn" type="button">Rejouer</button><button class="menuAction alt" id="overlayMenuBtn" type="button">Menu</button></div></div>`;
+    document.getElementById('overlayResumeBtn').addEventListener('click', togglePause);
+    document.getElementById('overlayRestartBtn').addEventListener('click', ()=>{ hideOverlay(); startGame(); });
+    document.getElementById('overlayMenuBtn').addEventListener('click', returnToMenuFromOverlay);
   } else if(mode === 'end'){
     const winnerLabel = opts && opts.winner === 'p1' ? (gameModeEl.value === 'two' ? 'Player 1 wins!' : 'You win!') : (gameModeEl.value === 'two' ? 'Player 2 wins!' : 'CPU wins!');
     const subtitle = `Final score ${playerScore} : ${cpuScore}`;
-    overlayBox.innerHTML = `<div class="winnerTitle">${winnerLabel}</div><div class="winnerSub">${subtitle}</div><div class="overlayButtons"><button class="btnPrimary" id="overlayRestart">Restart</button><button class="btnAlt" id="overlayShowHS">Show High Scores</button></div><div id="hsPanel" style="display:none"></div>`;
-    document.getElementById('overlayRestart').addEventListener('click', ()=>{ hideOverlay(); startGame(); });
+    overlayBox.innerHTML = `<div class="overlayPanel"><div class="winnerTitle">${winnerLabel}</div><p class="winnerSub">${subtitle}</p><div class="overlayButtons"><button class="menuAction" id="overlayReplayLocal" type="button">Rejouer</button><button class="menuAction alt" id="overlayMenuBtn" type="button">Menu</button><button class="menuAction scoreAction" id="overlayShowHS" type="button">High Score</button></div><div id="hsPanel" style="display:none"></div></div>`;
+    document.getElementById('overlayReplayLocal').addEventListener('click', ()=>{ hideOverlay(); startGame(); });
+    document.getElementById('overlayMenuBtn').addEventListener('click', returnToMenuFromOverlay);
     document.getElementById('overlayShowHS').addEventListener('click', ()=>{ toggleHSPanel(); });
   } else if(mode === 'onlineEnd'){
     const winnerName = getPlayerLabels()[opts?.winner] || opts?.winner || 'Player';
     const replayDisabledAttr = opts?.canReplay ? '' : ' disabled';
     const replayHint = opts?.canReplay ? 'L’hote peut relancer immediatement la partie.' : 'Seul l’hote peut relancer la partie.';
-    overlayBox.innerHTML = `<div class="winnerTitle">${winnerName} a gagne !</div><div class="winnerSub">Score final ${playerScore} : ${cpuScore}</div><div class="winnerSub">${replayHint}</div><div class="overlayButtons"><button class="btnPrimary" id="overlayReplayOnline"${replayDisabledAttr}>Rejouer</button><button class="btnAlt" id="overlayMenuBtn">Menu</button></div>`;
+    overlayBox.innerHTML = `<div class="overlayPanel"><div class="winnerTitle">${winnerName} a gagne !</div><p class="winnerSub">Score final ${playerScore} : ${cpuScore}</p><p class="winnerSub">${replayHint}</p><div class="overlayButtons"><button class="menuAction" id="overlayReplayOnline" type="button"${replayDisabledAttr}>Rejouer</button><button class="menuAction alt" id="overlayMenuBtn" type="button">Menu</button></div></div>`;
     document.getElementById('overlayReplayOnline').addEventListener('click', requestOnlineReplay);
-    document.getElementById('overlayMenuBtn').addEventListener('click', ()=>{ hideOverlay(); toggleMenuPanel(true); });
+    document.getElementById('overlayMenuBtn').addEventListener('click', returnToMenuFromOverlay);
   }
 }
-function hideOverlay(){ overlay.classList.remove('overlayVisible'); const hs = document.getElementById('hsPanel'); if(hs) hs.style.display = 'none'; }
+function hideOverlay(){
+  overlay.classList.remove('overlayVisible');
+  overlayRenderState = { mode: '', key: '' };
+  const hs = document.getElementById('hsPanel');
+  if(hs) hs.style.display = 'none';
+}
 function toggleHSPanel(){ let hs = document.getElementById('hsPanel'); if(!hs) return; if(hs.style.display === 'block'){ hs.style.display = 'none'; return; } const s = readHighScores(); hs.innerHTML = `<div style="font-weight:600;margin-bottom:6px">High Scores & Stats</div><div>Best Player Score: ${s.bestP}</div><div>Best CPU Score: ${s.bestC}</div><div>Your wins: ${s.wins}</div><div>Games played: ${s.total}</div><div style="margin-top:8px"><button class="btnAlt" id="overlayCloseHS">Close</button></div>`; hs.style.display = 'block'; document.getElementById('overlayCloseHS').addEventListener('click', ()=>{ hs.style.display='none'; }); }
 
 function recordGame(winner){ const playerWon = (winner==='p1'); const s = readHighScores(); s.total = (s.total || 0) + 1; if(playerScore > (s.bestP||0)) s.bestP = playerScore; if(cpuScore > (s.bestC||0)) s.bestC = cpuScore; if(playerWon) s.wins = (s.wins||0) + 1; writeHighScores({bestP:s.bestP,bestC:s.bestC,wins:s.wins,total:s.total}); }
@@ -2842,6 +2949,14 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 window.__pongTestApi = {
+  forceOfflineWinner(winner = 'p1'){
+    if(isOnlineMode()) return false;
+    const normalizedWinner = winner === 'p2' ? 'p2' : 'p1';
+    playerScore = normalizedWinner === 'p1' ? pointsToWin : 0;
+    cpuScore = normalizedWinner === 'p2' ? pointsToWin : 0;
+    endGame(normalizedWinner);
+    return true;
+  },
   forceOnlineWinner(winner = 'p1'){
     if(!isOnlineMode() || !onlineState.connected || !onlineState.inRoom) return false;
     sendOnlineMessage({ type: 'test_force_winner', winner });

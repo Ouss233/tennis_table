@@ -441,6 +441,42 @@ function forceWinnerForTests(ws, winner) {
   broadcastRoom(room);
 }
 
+function awardPointForTests(ws, winner) {
+  if (!ALLOW_TEST_COMMANDS) return;
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room) return;
+  const normalizedWinner = winner === 'p2' ? 'p2' : 'p1';
+  room.score[normalizedWinner] += 1;
+  room.paused = false;
+  room.waitingForServe = false;
+
+  if (room.score[normalizedWinner] >= room.pointsToWin) {
+    room.winner = normalizedWinner;
+    room.running = false;
+    logServerEvent('room_point_awarded_for_test', {
+      roomId: room.id,
+      winner: normalizedWinner,
+      score: room.score,
+      ended: true
+    });
+    notifyRoom(room, `Point de test pour ${room.names[normalizedWinner] || normalizedWinner}. Partie terminee.`);
+    broadcastRoom(room);
+    return;
+  }
+
+  resetRoomState(room, normalizedWinner === 'p1' ? 1 : -1);
+  logServerEvent('room_point_awarded_for_test', {
+    roomId: room.id,
+    winner: normalizedWinner,
+    score: room.score,
+    ended: false
+  });
+  notifyRoom(room, `Point de test pour ${room.names[normalizedWinner] || normalizedWinner}.`);
+  broadcastRoom(room);
+}
+
 function applyPowerUpForTests(ws, type, owner) {
   if (!ALLOW_TEST_COMMANDS) return;
   const client = getClientMeta(ws);
@@ -819,6 +855,11 @@ wss.on('connection', (ws) => {
 
     if (payload.type === 'test_force_winner') {
       forceWinnerForTests(ws, payload.winner);
+      return;
+    }
+
+    if (payload.type === 'test_award_point') {
+      awardPointForTests(ws, payload.winner);
       return;
     }
 

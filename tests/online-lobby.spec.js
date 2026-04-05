@@ -4,6 +4,14 @@ function createMotionCaptureId(prefix = 'motion') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function resolveSocketUrlForPage(page) {
+  const currentUrl = new URL(page.url());
+  if (currentUrl.hostname === '127.0.0.1' || currentUrl.hostname === 'localhost') {
+    return 'ws://127.0.0.1:8080';
+  }
+  return process.env.STAGING_WS_URL || 'wss://tennis-table-ws.onrender.com';
+}
+
 async function openOnlineLobby(page, playerName) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('online');
@@ -11,7 +19,7 @@ async function openOnlineLobby(page, playerName) {
   await expect(page.getByRole('heading', { name: 'Lobby Online' })).toBeVisible();
   await expect(page.locator('#playerName')).toBeVisible();
   await page.locator('#playerName').fill(playerName);
-  await page.locator('#serverUrl').fill('ws://127.0.0.1:8080');
+  await page.locator('#serverUrl').fill(resolveSocketUrlForPage(page));
 }
 
 async function getTestState(page) {
@@ -26,6 +34,12 @@ async function applyOnlinePowerUp(page, powerUpType, owner = 'p1') {
   await page.evaluate(({ nextType, nextOwner }) => {
     window.__pongTestApi.applyOnlinePowerUp(nextType, nextOwner);
   }, { nextType: powerUpType, nextOwner: owner });
+}
+
+async function awardOnlinePoint(page, winner = 'p1') {
+  await page.evaluate((nextWinner) => {
+    window.__pongTestApi.awardOnlinePoint(nextWinner);
+  }, winner);
 }
 
 async function openLocalTwoPlayerGame(page) {
@@ -472,6 +486,53 @@ test.describe('Online Lobby', () => {
 
     await expect(hostPage.locator('#gameContainer')).not.toHaveClass(/playing/);
     await expect(hostPage.getByRole('button', { name: 'Lobby online' })).toBeVisible();
+
+    await contextOne.close();
+    await contextTwo.close();
+  });
+
+  test('plays a full socket match to 3 points, then replays and completes a second full match', async ({ browser }) => {
+    const { contextOne, contextTwo, hostPage, guestPage } = await createStartedOnlineMatch(browser, {
+      roomId: `bestoftwo-${Date.now()}`,
+      pointsToWin: 3
+    });
+
+    for (let point = 1; point <= 3; point += 1) {
+      await awardOnlinePoint(hostPage, 'p1');
+      await expect.poll(async () => (await getTestState(hostPage)).scoreText).toContain(`${point}`);
+      await expect.poll(async () => (await getTestState(guestPage)).scoreText).toContain(`${point}`);
+      if (point < 3) {
+        await expect.poll(async () => (await getTestState(hostPage)).running).toBe(true);
+        await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe(null);
+      }
+    }
+
+    await expect(hostPage.locator('#overlayReplayOnline')).toBeVisible();
+    await expect(hostPage.locator('#overlayBox .winnerTitle')).toContainText('Host Player a gagne');
+    await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe('p1');
+    await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe('p1');
+
+    await hostPage.locator('#overlayReplayOnline').click();
+
+    await expect.poll(async () => (await getTestState(hostPage)).running).toBe(true);
+    await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe(null);
+    await expect(hostPage.locator('#scoreLabel')).toContainText('0');
+    await expect(guestPage.locator('#scoreLabel')).toContainText('0');
+
+    for (let point = 1; point <= 3; point += 1) {
+      await awardOnlinePoint(hostPage, 'p2');
+      await expect.poll(async () => (await getTestState(hostPage)).scoreText).toContain(`${point}`);
+      await expect.poll(async () => (await getTestState(guestPage)).scoreText).toContain(`${point}`);
+      if (point < 3) {
+        await expect.poll(async () => (await getTestState(hostPage)).running).toBe(true);
+        await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe(null);
+      }
+    }
+
+    await expect(hostPage.locator('#overlayReplayOnline')).toBeVisible();
+    await expect(hostPage.locator('#overlayBox .winnerTitle')).toContainText('Guest Player a gagne');
+    await expect.poll(async () => (await getTestState(hostPage)).onlineWinner).toBe('p2');
+    await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe('p2');
 
     await contextOne.close();
     await contextTwo.close();

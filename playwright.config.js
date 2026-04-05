@@ -1,5 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
+const LOCAL_BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000';
+const STAGING_BASE_URL = process.env.STAGING_BASE_URL || 'https://tennis-table-ten.vercel.app/jeux_ping_pong.html';
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -7,9 +10,24 @@ export default defineConfig({
     timeout: 5_000
   },
   use: {
-    baseURL: 'http://127.0.0.1:3000',
     trace: 'on-first-retry'
   },
+  projects: [
+    {
+      name: 'local',
+      grepInvert: /@staging/,
+      use: {
+        baseURL: LOCAL_BASE_URL
+      }
+    },
+    {
+      name: 'staging',
+      grep: /@staging/,
+      use: {
+        baseURL: STAGING_BASE_URL
+      }
+    }
+  ],
   webServer: [
     {
       command: 'node static-server.mjs',

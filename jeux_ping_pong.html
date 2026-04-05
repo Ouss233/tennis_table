@@ -2995,6 +2995,11 @@ window.__pongTestApi = {
     sendOnlineMessage({ type: 'test_force_winner', winner });
     return true;
   },
+  awardOnlinePoint(winner = 'p1'){
+    if(!isOnlineMode() || !onlineState.connected || !onlineState.inRoom) return false;
+    sendOnlineMessage({ type: 'test_award_point', winner });
+    return true;
+  },
   applyOnlinePowerUp(powerUpType = 'expand', owner = 'p1'){
     if(!isOnlineMode() || !onlineState.connected || !onlineState.inRoom) return false;
     sendOnlineMessage({ type: 'test_apply_powerup', powerUpType, owner });

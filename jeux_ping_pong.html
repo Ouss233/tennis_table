@@ -1203,6 +1203,7 @@ const onlineState = {
     ball: null
   },
   lastSnapshotSeq: 0,
+  lastLobbySeq: 0,
   lastServerTick: 0,
   lastServerSentAt: 0,
   lastSnapshotReceivedAt: 0,
@@ -1488,6 +1489,7 @@ function disconnectOnlineSession(){
   onlineState.selectedJoinRoomId = '';
   onlineState.targets = { p1: null, p2: null, ball: null };
   onlineState.lastSnapshotSeq = 0;
+  onlineState.lastLobbySeq = 0;
   onlineState.lastServerTick = 0;
   onlineState.lastServerSentAt = 0;
   onlineState.lastSnapshotReceivedAt = 0;
@@ -1573,6 +1575,15 @@ function updateLobbyControls(){
   startBtn.textContent = onlineMode ? 'Lobby online' : 'Jouer';
 }
 function applyLobbySnapshot(snapshot){
+  const lobbySeq = Number(snapshot.lobbySeq || 0);
+  if(lobbySeq && onlineState.lastLobbySeq && lobbySeq < onlineState.lastLobbySeq){
+    pushOnlineDebugLog('lobby_snapshot_ignored', {
+      lobbySeq,
+      previousLobbySeq: onlineState.lastLobbySeq
+    });
+    return;
+  }
+  onlineState.lastLobbySeq = lobbySeq || onlineState.lastLobbySeq;
   onlineState.connectedUsers = snapshot.connectedUsers || [];
   onlineState.rooms = snapshot.rooms || [];
   if(onlineState.selectedJoinRoomId){
@@ -1598,6 +1609,9 @@ function applyRoomStatus(snapshot){
   onlineState.inRoom = true;
   onlineState.waiting = !!snapshot.waitingForOpponent;
   onlineState.names = snapshot.names || onlineState.names;
+  if(typeof snapshot.lobbySeq === 'number' && snapshot.lobbySeq > onlineState.lastLobbySeq){
+    onlineState.lastLobbySeq = snapshot.lobbySeq;
+  }
   if(snapshot.hostId != null && onlineState.clientId != null){
     onlineState.isHost = snapshot.hostId === onlineState.clientId;
   }
@@ -2591,7 +2605,26 @@ joinRoomBtn.addEventListener('click', ()=>{
   });
 });
 startRoomBtn.addEventListener('click', ()=>{
-  if(!onlineState.connected || !onlineState.inRoom || !onlineState.isHost) return;
+  if(!onlineState.connected){
+    statusEl.textContent = 'Connectez-vous au serveur avant de lancer la partie.';
+    return;
+  }
+  if(!onlineState.inRoom){
+    statusEl.textContent = 'Créez ou rejoignez une room avant de lancer la partie.';
+    return;
+  }
+  if(!onlineState.isHost){
+    statusEl.textContent = 'Seul l’hôte peut lancer la partie.';
+    return;
+  }
+  if(onlineState.waiting){
+    statusEl.textContent = 'En attente du deuxième joueur avant de lancer la partie.';
+    return;
+  }
+  pushOnlineDebugLog('start_game_requested', {
+    roomId: onlineState.roomId,
+    isHost: onlineState.isHost
+  });
   sendOnlineMessage({
     type: 'start_game',
     pointsToWin: Math.max(1, parseInt(pointsToWinEl.value, 10) || 3)
@@ -2962,6 +2995,11 @@ window.__pongTestApi = {
     sendOnlineMessage({ type: 'test_force_winner', winner });
     return true;
   },
+  applyOnlinePowerUp(powerUpType = 'expand', owner = 'p1'){
+    if(!isOnlineMode() || !onlineState.connected || !onlineState.inRoom) return false;
+    sendOnlineMessage({ type: 'test_apply_powerup', powerUpType, owner });
+    return true;
+  },
   requestOnlineReplay(){
     if(!canReplayOnlineGame()) return false;
     requestOnlineReplay();
@@ -2995,6 +3033,7 @@ window.__pongTestApi = {
       role: onlineState.role,
       roomId: onlineState.roomId,
       snapshotSeq: onlineState.lastSnapshotSeq,
+      lobbySeq: onlineState.lastLobbySeq,
       serverTick: onlineState.lastServerTick,
       serverSentAt: onlineState.lastServerSentAt,
       lastSnapshotReceivedAt: onlineState.lastSnapshotReceivedAt,

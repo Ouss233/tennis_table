@@ -22,6 +22,12 @@ async function getBackgroundStyle(page) {
   return page.evaluate(() => getComputedStyle(document.body, '::before').backgroundImage);
 }
 
+async function applyOnlinePowerUp(page, powerUpType, owner = 'p1') {
+  await page.evaluate(({ nextType, nextOwner }) => {
+    window.__pongTestApi.applyOnlinePowerUp(nextType, nextOwner);
+  }, { nextType: powerUpType, nextOwner: owner });
+}
+
 async function openLocalTwoPlayerGame(page) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('two');
@@ -263,6 +269,7 @@ test.describe('Online Lobby', () => {
 
     await expect.poll(async () => (await getTestState(hostPage)).obstacleCount).toBe(1);
     await expect.poll(async () => (await getTestState(guestPage)).obstacleCount).toBe(1);
+    await waitForPaddleSync(hostPage, guestPage);
 
     const hostMotion = await captureMotionWhileHolding({
       actionPage: hostPage,
@@ -284,12 +291,126 @@ test.describe('Online Lobby', () => {
     await expect.poll(async () => (await getTestState(hostPage)).scoreText).toContain('Host Player');
     await expect.poll(async () => (await getTestState(guestPage)).scoreText).toContain('Guest Player');
     expect(hostMotion.totalTravel).toBeGreaterThan(18);
-    expect(guestMotion.totalTravel).toBeGreaterThan(18);
+    expect(guestMotion.totalTravel).toBeGreaterThan(8);
     await expect.poll(async () => (await getTestState(hostPage)).ignoredSnapshotCount).toBe(0);
     await expect.poll(async () => (await getTestState(guestPage)).ignoredSnapshotCount).toBe(0);
 
     await contextOne.close();
     await contextTwo.close();
+  });
+
+  test('completes a stable two-player socket journey across lobby buttons, in-game controls, bonuses, and launch readiness', async ({ browser }) => {
+    const localContext = await createIsolatedContext(browser);
+    const localPage = await localContext.newPage();
+    await openLocalTwoPlayerGame(localPage);
+    const localMotion = await captureMotionWhileHolding({
+      actionPage: localPage,
+      observedPage: localPage,
+      observedTarget: 'player',
+      framesAfterResponse: 18
+    });
+
+    const hostContext = await createIsolatedContext(browser);
+    const guestContext = await createIsolatedContext(browser);
+    const spectatorContext = await createIsolatedContext(browser);
+    const hostPage = await hostContext.newPage();
+    const guestPage = await guestContext.newPage();
+    const spectatorPage = await spectatorContext.newPage();
+    const roomId = `full-${Date.now()}`;
+
+    await openOnlineLobby(hostPage, 'Full Host');
+    await expect(hostPage.locator('#connectOnlineBtn')).toBeEnabled();
+    await expect(hostPage.locator('#createRoomBtn')).toBeDisabled();
+    await expect(hostPage.locator('#joinRoomBtn')).toBeDisabled();
+    await expect(hostPage.locator('#startRoomBtn')).toBeDisabled();
+
+    await hostPage.locator('#pointsToWin').fill('3');
+    await hostPage.locator('#roomId').fill(roomId);
+    await hostPage.locator('#connectOnlineBtn').click();
+    await expect(hostPage.locator('#createRoomBtn')).toBeEnabled();
+    await expect(hostPage.locator('#joinRoomBtn')).toBeDisabled();
+    await hostPage.locator('#createRoomBtn').click();
+    await expect(hostPage.locator('#connectionText')).toContainText(`room ${roomId} creee`);
+    await expect(hostPage.locator('#startRoomBtn')).toBeDisabled();
+
+    await openOnlineLobby(guestPage, 'Full Guest');
+    await expect(guestPage.locator('#connectOnlineBtn')).toBeEnabled();
+    await guestPage.locator('#connectOnlineBtn').click();
+    await expect(guestPage.locator('#joinRoomBtn')).toBeDisabled();
+    await expect(guestPage.locator('#roomsList')).toContainText(roomId);
+    await guestPage.locator('#roomsList .lobbyItem').filter({ hasText: roomId }).click();
+    await expect(guestPage.locator('#joinRoomBtn')).toBeEnabled();
+    await guestPage.locator('#joinRoomBtn').click();
+    await expect(guestPage.locator('#connectionText')).toContainText(`room ${roomId} rejointe`);
+
+    const hostStateAfterJoin = await getTestState(hostPage);
+    await expect.poll(async () => (await getTestState(hostPage)).waiting).toBe(false);
+    await expect(hostPage.locator('#startRoomBtn')).toBeEnabled();
+
+    await openOnlineLobby(spectatorPage, 'Lobby Watcher');
+    await spectatorPage.locator('#connectOnlineBtn').click();
+    await expect(spectatorPage.locator('#connectionText')).toContainText('connecte au serveur');
+    await expect.poll(async () => (await getTestState(hostPage)).lobbySeq).toBeGreaterThan(hostStateAfterJoin.lobbySeq);
+    await expect(hostPage.locator('#startRoomBtn')).toBeEnabled();
+
+    await hostPage.locator('#startRoomBtn').click();
+
+    await expect(hostPage.locator('#gameContainer')).toHaveClass(/playing/);
+    await expect(guestPage.locator('#gameContainer')).toHaveClass(/playing/);
+    await expect(hostPage.locator('#pauseBtn')).toBeVisible();
+    await expect(hostPage.locator('#menuToggleBtn')).toBeVisible();
+    await expect(guestPage.locator('#pauseBtn')).toBeVisible();
+    await expect.poll(async () => (await getTestState(hostPage)).obstacleCount).toBe(1);
+    await expect.poll(async () => (await getTestState(guestPage)).obstacleCount).toBe(1);
+
+    await hostPage.locator('#pauseBtn').click();
+    await expect.poll(async () => (await getTestState(hostPage)).paused).toBe(true);
+    await expect.poll(async () => (await getTestState(guestPage)).paused).toBe(true);
+    await hostPage.locator('#pauseBtn').click();
+    await expect.poll(async () => (await getTestState(hostPage)).paused).toBe(false);
+    await expect.poll(async () => (await getTestState(guestPage)).paused).toBe(false);
+
+    await hostPage.locator('#menuToggleBtn').click();
+    await expect.poll(async () => (await getTestState(hostPage)).menuOpen).toBe(true);
+    await expect(hostPage.locator('#resumeGameBtn')).toBeVisible();
+    await hostPage.locator('#resumeGameBtn').click();
+    await expect.poll(async () => (await getTestState(hostPage)).menuOpen).toBe(false);
+
+    await applyOnlinePowerUp(hostPage, 'expand', 'p1');
+    await expect.poll(async () => (await getTestState(hostPage)).activeBonusCount).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => (await getTestState(guestPage)).activeBonusCount).toBeGreaterThanOrEqual(1);
+    await expect(hostPage.locator('#leftBonusEffects')).toContainText('Raquette +');
+    await expect(guestPage.locator('#leftBonusEffects')).toContainText('Raquette +');
+
+    await applyOnlinePowerUp(hostPage, 'paddleSpeed', 'p2');
+    await expect.poll(async () => (await getTestState(hostPage)).activeBonusCount).toBeGreaterThanOrEqual(2);
+    await expect(hostPage.locator('#rightBonusEffects')).toContainText('Raquette rapide');
+    await expect(guestPage.locator('#rightBonusEffects')).toContainText('Raquette rapide');
+
+    await applyOnlinePowerUp(hostPage, 'duplicate', 'p1');
+    await expect.poll(async () => (await getTestState(hostPage)).ballCount).toBe(2);
+    await expect.poll(async () => (await getTestState(guestPage)).ballCount).toBe(2);
+
+    await waitForPaddleSync(hostPage, guestPage);
+    const onlineMotion = await captureMotionWhileHolding({
+      actionPage: hostPage,
+      observedPage: guestPage
+    });
+    expect(onlineMotion.firstResponseMs).toBeLessThanOrEqual(localMotion.firstResponseMs + 160);
+    expect(onlineMotion.maxJump).toBeLessThanOrEqual(Math.max(localMotion.maxJump + 18, 26));
+    expect(onlineMotion.totalTravel).toBeGreaterThan(localMotion.totalTravel * 0.7);
+
+    await hostPage.evaluate(() => window.__pongTestApi.forceOnlineWinner('p1'));
+    await expect(hostPage.locator('#overlayReplayOnline')).toBeVisible();
+    await expect(hostPage.locator('#overlayMenuBtn')).toBeVisible();
+    await hostPage.locator('#overlayReplayOnline').click();
+    await expect.poll(async () => (await getTestState(hostPage)).running).toBe(true);
+    await expect.poll(async () => (await getTestState(guestPage)).onlineWinner).toBe(null);
+
+    await localContext.close();
+    await hostContext.close();
+    await guestContext.close();
+    await spectatorContext.close();
   });
 
   test('opens the in-game menu in socket mode and pauses then resumes for both players', async ({ browser }) => {

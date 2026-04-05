@@ -19,6 +19,7 @@ const ALLOW_TEST_COMMANDS = process.env.ALLOW_TEST_COMMANDS === '1';
 const rooms = new Map();
 const clients = new Map();
 let nextClientId = 1;
+let nextLobbySeq = 0;
 
 function logServerEvent(type, payload = {}) {
   console.log(`[ws] ${type} ${JSON.stringify(payload)}`);
@@ -133,8 +134,10 @@ function getRoomsSnapshot() {
 }
 
 function broadcastLobby() {
+  nextLobbySeq += 1;
   const payload = {
     type: 'lobby',
+    lobbySeq: nextLobbySeq,
     connectedUsers: getConnectedUsersSnapshot(),
     rooms: getRoomsSnapshot()
   };
@@ -239,6 +242,7 @@ function sendRoomStatus(room) {
   const payload = {
     type: 'room_status',
     roomId: room.id,
+    lobbySeq: nextLobbySeq,
     names: room.names,
     waitingForOpponent: roomPlayerCount(room) < 2,
     hostId: room.hostId
@@ -434,6 +438,25 @@ function forceWinnerForTests(ws, winner) {
   room.waitingForServe = false;
   logServerEvent('room_forced_winner', { roomId: room.id, winner: normalizedWinner });
   notifyRoom(room, `Test: victoire forcee pour ${room.names[normalizedWinner] || normalizedWinner}.`);
+  broadcastRoom(room);
+}
+
+function applyPowerUpForTests(ws, type, owner) {
+  if (!ALLOW_TEST_COMMANDS) return;
+  const client = getClientMeta(ws);
+  if (!client || !client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room) return;
+  const normalizedType = ['expand', 'shrink', 'paddleSpeed', 'duplicate'].includes(type) ? type : 'expand';
+  const normalizedOwner = owner === 'p2' ? 'p2' : 'p1';
+  const sourceBall = room.balls[0];
+  if (!sourceBall) return;
+  applyPowerUp(room, normalizedOwner, normalizedType, sourceBall);
+  logServerEvent('room_powerup_applied_for_test', {
+    roomId: room.id,
+    type: normalizedType,
+    owner: normalizedOwner
+  });
   broadcastRoom(room);
 }
 
@@ -796,6 +819,11 @@ wss.on('connection', (ws) => {
 
     if (payload.type === 'test_force_winner') {
       forceWinnerForTests(ws, payload.winner);
+      return;
+    }
+
+    if (payload.type === 'test_apply_powerup') {
+      applyPowerUpForTests(ws, payload.powerUpType, payload.owner);
       return;
     }
 

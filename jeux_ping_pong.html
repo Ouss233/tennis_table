@@ -1210,11 +1210,17 @@ const onlineState = {
   ignoredSnapshotCount: 0,
   lastInputSentAt: 0,
   lastInputPayload: null,
-  lastFrameAt: 0
+  lastFrameAt: 0,
+  connecting: false,
+  connectAttempt: 0,
+  connectSessionId: 0,
+  reconnectTimer: 0,
+  manualDisconnect: false
 };
 const ONLINE_FRAME_MS = 1000 / 60;
 const ONLINE_EXTRAPOLATION_MAX_FRAMES = 3;
 const ONLINE_DEBUG_LOG_LIMIT = 240;
+const ONLINE_CONNECT_RETRY_DELAYS_MS = [0, 1200, 2400, 4000];
 const onlineDebugLog = [];
 const motionCaptures = new Map();
 
@@ -1468,6 +1474,13 @@ function getPlayerLabels(){
     : { p1: 'Vous', p2: 'CPU' };
 }
 function disconnectOnlineSession(){
+  onlineState.manualDisconnect = true;
+  onlineState.connecting = false;
+  onlineState.connectAttempt = 0;
+  if(onlineState.reconnectTimer){
+    clearTimeout(onlineState.reconnectTimer);
+    onlineState.reconnectTimer = 0;
+  }
   if(onlineState.socket){
     try { onlineState.socket.close(); } catch {}
   }
@@ -1497,6 +1510,7 @@ function disconnectOnlineSession(){
   onlineState.lastInputSentAt = 0;
   onlineState.lastInputPayload = null;
   onlineState.lastFrameAt = 0;
+  onlineState.connectSessionId += 1;
   pushOnlineDebugLog('session_disconnected');
   renderLobbyLists();
   updateLobbyControls();
@@ -1567,7 +1581,7 @@ function renderLobbyLists(){
 function updateLobbyControls(){
   const onlineMode = isOnlineMode();
   const hasSelectedRoom = !!onlineState.selectedJoinRoomId && onlineState.rooms.some((room) => room.id === onlineState.selectedJoinRoomId && room.count < 2);
-  connectOnlineBtn.disabled = !onlineMode || onlineState.connected;
+  connectOnlineBtn.disabled = !onlineMode || onlineState.connected || onlineState.connecting;
   createRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom;
   joinRoomBtn.disabled = !onlineMode || !onlineState.connected || onlineState.inRoom || !hasSelectedRoom;
   startRoomBtn.disabled = !onlineMode || !onlineState.connected || !onlineState.inRoom || !onlineState.isHost || onlineState.waiting;
@@ -1963,37 +1977,63 @@ function sendOnlineInputState(){
   onlineState.lastInputSentAt = now;
   sendOnlineMessage({ type: 'input', ...input });
 }
-function connectOnlineLobby(){
-  if(onlineState.connected) return;
-  ensureAudioContext();
-  setPlayingUI(false);
-  pauseBtn.hidden = true;
-
-  const socket = new WebSocket(serverUrlEl.value.trim() || 'wss://tennis-table-ws.onrender.com');
+function clearOnlineReconnectTimer(){
+  if(!onlineState.reconnectTimer) return;
+  clearTimeout(onlineState.reconnectTimer);
+  onlineState.reconnectTimer = 0;
+}
+function scheduleOnlineReconnect(sessionId, nextAttempt, reason){
+  if(!isOnlineMode() || onlineState.manualDisconnect || sessionId !== onlineState.connectSessionId) return;
+  if(nextAttempt > ONLINE_CONNECT_RETRY_DELAYS_MS.length){
+    onlineState.connecting = false;
+    updateLobbyControls();
+    updateConnectionState('idle', 'Etat: echec de connexion');
+    statusEl.textContent = 'Connexion impossible apres plusieurs tentatives.';
+    pushOnlineDebugLog('socket_retry_exhausted', { sessionId, reason, nextAttempt });
+    return;
+  }
+  const delayMs = ONLINE_CONNECT_RETRY_DELAYS_MS[nextAttempt - 1] || 0;
+  clearOnlineReconnectTimer();
+  onlineState.connecting = true;
+  onlineState.connectAttempt = nextAttempt;
+  updateLobbyControls();
+  updateConnectionState('connecting', `Etat: tentative ${nextAttempt}/${ONLINE_CONNECT_RETRY_DELAYS_MS.length}...`);
+  statusEl.textContent = nextAttempt === 1 ? 'Connexion au serveur WebSocket...' : `Nouvelle tentative de connexion (${nextAttempt}/${ONLINE_CONNECT_RETRY_DELAYS_MS.length})...`;
+  pushOnlineDebugLog('socket_retry_scheduled', { sessionId, reason, nextAttempt, delayMs });
+  onlineState.reconnectTimer = window.setTimeout(() => {
+    onlineState.reconnectTimer = 0;
+    connectOnlineLobbyAttempt(sessionId, nextAttempt);
+  }, delayMs);
+}
+function connectOnlineLobbyAttempt(sessionId, attempt){
+  if(!isOnlineMode() || onlineState.manualDisconnect || sessionId !== onlineState.connectSessionId) return;
+  const socketUrl = serverUrlEl.value.trim() || 'wss://tennis-table-ws.onrender.com';
+  const socket = new WebSocket(socketUrl);
   onlineState.socket = socket;
-  const requestedName = playerNameEl.value.trim();
-  onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
-  onlineState.waiting = true;
-  onlineState.selectedJoinRoomId = '';
-  onlineState.lastFrameAt = 0;
-  onlineState.lastInputSentAt = 0;
-  onlineState.lastInputPayload = null;
-  onlineState.targets = { p1: null, p2: null, ball: null };
-  onlineState.lastSnapshotSeq = 0;
-  onlineState.lastServerTick = 0;
-  onlineState.lastServerSentAt = 0;
-  onlineState.lastSnapshotReceivedAt = 0;
-  onlineState.ignoredSnapshotCount = 0;
-  statusEl.textContent = 'Connexion au serveur WebSocket...';
-  updateConnectionState('connecting', 'Etat: connexion en cours...');
+  onlineState.connecting = true;
+  onlineState.connectAttempt = attempt;
+  updateLobbyControls();
   pushOnlineDebugLog('socket_connecting', {
-    url: serverUrlEl.value.trim() || 'wss://tennis-table-ws.onrender.com',
-    playerName: onlineState.playerName || null
+    url: socketUrl,
+    playerName: onlineState.playerName || null,
+    attempt,
+    sessionId
   });
 
+  let opened = false;
+  const isStaleSocket = () => sessionId !== onlineState.connectSessionId || onlineState.socket !== socket;
+
   socket.addEventListener('open', () => {
+    if(isStaleSocket()){
+      try { socket.close(); } catch {}
+      return;
+    }
+    opened = true;
+    clearOnlineReconnectTimer();
     onlineState.connected = true;
-    pushOnlineDebugLog('socket_open', { clientId: onlineState.clientId });
+    onlineState.connecting = false;
+    onlineState.connectAttempt = attempt;
+    pushOnlineDebugLog('socket_open', { clientId: onlineState.clientId, attempt, sessionId });
     updateConnectionState('connected', 'Etat: connecte au serveur');
     sendOnlineMessage({
       type: 'hello',
@@ -2003,6 +2043,7 @@ function connectOnlineLobby(){
   });
 
   socket.addEventListener('message', (event) => {
+    if(isStaleSocket()) return;
     const payload = JSON.parse(event.data);
     pushOnlineDebugLog('socket_message', {
       type: payload.type,
@@ -2061,28 +2102,75 @@ function connectOnlineLobby(){
   });
 
   socket.addEventListener('close', () => {
+    if(isStaleSocket()) return;
+    onlineState.socket = null;
     pushOnlineDebugLog('socket_close', {
       roomId: onlineState.roomId || null,
-      clientId: onlineState.clientId
+      clientId: onlineState.clientId,
+      opened,
+      attempt,
+      sessionId
     });
-    if(isOnlineMode()){
-      onlineState.connected = false;
-      onlineState.inRoom = false;
-      running = false;
-      statusEl.textContent = 'Connexion WebSocket fermee.';
-      updateLobbyControls();
-      updateConnectionState('idle', 'Etat: connexion fermee');
+    if(!isOnlineMode()) return;
+    onlineState.connected = false;
+    onlineState.inRoom = false;
+    running = false;
+    if(!opened && !onlineState.manualDisconnect){
+      scheduleOnlineReconnect(sessionId, attempt + 1, 'close_before_open');
+      return;
     }
+    onlineState.connecting = false;
+    onlineState.connectAttempt = 0;
+    statusEl.textContent = 'Connexion WebSocket fermee.';
+    updateLobbyControls();
+    updateConnectionState('idle', 'Etat: connexion fermee');
   });
 
   socket.addEventListener('error', () => {
+    if(isStaleSocket()) return;
     pushOnlineDebugLog('socket_error', {
       roomId: onlineState.roomId || null,
-      clientId: onlineState.clientId
+      clientId: onlineState.clientId,
+      opened,
+      attempt,
+      sessionId
     });
+    if(!opened){
+      statusEl.textContent = `Connexion au serveur impossible, nouvelle tentative (${Math.min(attempt + 1, ONLINE_CONNECT_RETRY_DELAYS_MS.length)}/${ONLINE_CONNECT_RETRY_DELAYS_MS.length})...`;
+      updateConnectionState('connecting', 'Etat: reconnexion en cours...');
+      return;
+    }
     statusEl.textContent = 'Impossible de joindre le serveur WebSocket.';
     updateConnectionState('idle', 'Etat: erreur de connexion');
   });
+}
+function connectOnlineLobby(){
+  if(onlineState.connected || onlineState.connecting) return;
+  ensureAudioContext();
+  setPlayingUI(false);
+  pauseBtn.hidden = true;
+  const requestedName = playerNameEl.value.trim();
+  onlineState.playerName = (!requestedName || requestedName === 'Player 1' || requestedName === 'Player 2') ? '' : requestedName;
+  onlineState.manualDisconnect = false;
+  onlineState.waiting = true;
+  onlineState.selectedJoinRoomId = '';
+  onlineState.lastFrameAt = 0;
+  onlineState.lastInputSentAt = 0;
+  onlineState.lastInputPayload = null;
+  onlineState.targets = { p1: null, p2: null, ball: null };
+  onlineState.lastSnapshotSeq = 0;
+  onlineState.lastServerTick = 0;
+  onlineState.lastServerSentAt = 0;
+  onlineState.lastSnapshotReceivedAt = 0;
+  onlineState.ignoredSnapshotCount = 0;
+  onlineState.connected = false;
+  onlineState.connecting = true;
+  onlineState.connectAttempt = 0;
+  onlineState.clientId = null;
+  clearOnlineReconnectTimer();
+  onlineState.connectSessionId += 1;
+  updateLobbyControls();
+  scheduleOnlineReconnect(onlineState.connectSessionId, 1, 'initial_connect');
 }
 function getPointLabel(winner){
   if(isOnlineMode()) return `Point pour ${getPlayerLabels()[winner] || winner} !`;
@@ -3054,6 +3142,8 @@ window.__pongTestApi = {
       running,
       paused,
       connected: onlineState.connected,
+      connecting: onlineState.connecting,
+      connectAttempt: onlineState.connectAttempt,
       inRoom: onlineState.inRoom,
       waiting: onlineState.waiting,
       onlinePaused: onlineState.paused,

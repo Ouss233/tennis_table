@@ -16,6 +16,10 @@ async function getTestState(page) {
   return page.evaluate(() => window.__pongTestApi.getState());
 }
 
+async function getOnlineDebugLog(page) {
+  return page.evaluate(() => window.__pongTestApi.getOnlineDebugLog());
+}
+
 async function openOnlineLobby(page, playerName) {
   await page.goto('/jeux_ping_pong.html');
   await page.locator('#gameMode').selectOption('online');
@@ -120,8 +124,8 @@ async function createStartedOnlineMatch(browser, {
 
   await expect(hostPage.locator('#gameContainer')).toHaveClass(/playing/);
   await expect(guestPage.locator('#gameContainer')).toHaveClass(/playing/);
-  await expect.poll(async () => (await getTestState(hostPage)).snapshotSeq, { timeout: 15_000 }).toBeGreaterThan(0);
-  await expect.poll(async () => (await getTestState(guestPage)).snapshotSeq, { timeout: 15_000 }).toBeGreaterThan(0);
+  await expect.poll(async () => (await getTestState(hostPage)).running, { timeout: 15_000 }).toBe(true);
+  await expect.poll(async () => (await getTestState(guestPage)).running, { timeout: 15_000 }).toBe(true);
 
   return { contextOne, contextTwo, hostPage, guestPage, roomId };
 }
@@ -160,6 +164,53 @@ test('measures staging lag against local two-player reference @staging', async (
   expect(onlineMotion.totalTravel).toBeGreaterThan(localMotion.totalTravel * 0.65);
 
   await localContext.close();
+  await contextOne.close();
+  await contextTwo.close();
+});
+
+test('starts a staged socket match after both players connect on Vercel/Render @staging', async ({ browser }) => {
+  const { contextOne, contextTwo, hostPage, guestPage, roomId } = await createStartedOnlineMatch(browser, {
+    roomId: createShortRoomId('start')
+  });
+
+  const [hostState, guestState, hostLog, guestLog] = await Promise.all([
+    getTestState(hostPage),
+    getTestState(guestPage),
+    getOnlineDebugLog(hostPage),
+    getOnlineDebugLog(guestPage)
+  ]);
+
+  console.log('staging-start-state', JSON.stringify({
+    roomId,
+    host: {
+      connected: hostState.connected,
+      connecting: hostState.connecting,
+      connectAttempt: hostState.connectAttempt,
+      inRoom: hostState.inRoom,
+      waiting: hostState.waiting,
+      isHost: hostState.isHost,
+      running: hostState.running,
+      statusText: hostState.statusText,
+      connectionText: hostState.connectionText
+    },
+    guest: {
+      connected: guestState.connected,
+      connecting: guestState.connecting,
+      connectAttempt: guestState.connectAttempt,
+      inRoom: guestState.inRoom,
+      waiting: guestState.waiting,
+      isHost: guestState.isHost,
+      running: guestState.running,
+      statusText: guestState.statusText,
+      connectionText: guestState.connectionText
+    },
+    hostLogTail: hostLog.slice(-8),
+    guestLogTail: guestLog.slice(-8)
+  }));
+
+  expect(hostState.running).toBe(true);
+  expect(guestState.running).toBe(true);
+
   await contextOne.close();
   await contextTwo.close();
 });

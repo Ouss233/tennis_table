@@ -12,12 +12,53 @@ function getStagingSocketUrl() {
   return process.env.STAGING_WS_URL || 'wss://tennis-table-ws.onrender.com';
 }
 
+function getStagingHealthUrl() {
+  if (process.env.STAGING_HEALTH_URL) return process.env.STAGING_HEALTH_URL;
+  const socketUrl = getStagingSocketUrl();
+  return socketUrl
+    .replace(/^wss:/, 'https:')
+    .replace(/^ws:/, 'http:')
+    .replace(/\/?$/, '/health');
+}
+
 async function getTestState(page) {
   return page.evaluate(() => window.__pongTestApi.getState());
 }
 
 async function getOnlineDebugLog(page) {
   return page.evaluate(() => window.__pongTestApi.getOnlineDebugLog());
+}
+
+async function wakeStagingBackend(request) {
+  const healthUrl = getStagingHealthUrl();
+  let lastStatus = 'no-response';
+  const start = Date.now();
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      const response = await request.get(healthUrl, {
+        timeout: 8_000,
+        failOnStatusCode: false
+      });
+      lastStatus = String(response.status());
+      if (response.ok()) {
+        console.log('staging-health', JSON.stringify({
+          url: healthUrl,
+          attempt,
+          status: response.status(),
+          elapsedMs: Date.now() - start
+        }));
+        return;
+      }
+    } catch (error) {
+      lastStatus = error.message;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  console.log('staging-health', JSON.stringify({
+    url: healthUrl,
+    status: lastStatus,
+    elapsedMs: Date.now() - start
+  }));
 }
 
 async function openOnlineLobby(page, playerName) {
@@ -88,12 +129,13 @@ async function waitForPaddleSync(pageA, pageB, tolerance = 18) {
   }, { timeout: 15_000 }).toBeLessThanOrEqual(tolerance);
 }
 
-async function createStartedOnlineMatch(browser, {
+async function createStartedOnlineMatch(browser, request, {
   roomId = createShortRoomId('stg'),
   hostName = 'Stage Host',
   guestName = 'Stage Guest',
   pointsToWin = 3
 } = {}) {
+  await wakeStagingBackend(request);
   const contextOne = await createIsolatedContext(browser);
   const contextTwo = await createIsolatedContext(browser);
   const hostPage = await contextOne.newPage();
@@ -130,7 +172,7 @@ async function createStartedOnlineMatch(browser, {
   return { contextOne, contextTwo, hostPage, guestPage, roomId };
 }
 
-test('measures staging lag against local two-player reference @staging', async ({ browser }) => {
+test('measures staging lag against local two-player reference @staging', async ({ browser, request }) => {
   const localContext = await createIsolatedContext(browser);
   const localPage = await localContext.newPage();
   await openLocalTwoPlayerGame(localPage);
@@ -142,7 +184,7 @@ test('measures staging lag against local two-player reference @staging', async (
     framesAfterResponse: 18
   });
 
-  const { contextOne, contextTwo, hostPage, guestPage } = await createStartedOnlineMatch(browser, {
+  const { contextOne, contextTwo, hostPage, guestPage } = await createStartedOnlineMatch(browser, request, {
     roomId: createShortRoomId('lag')
   });
   await waitForPaddleSync(hostPage, guestPage);
@@ -168,8 +210,8 @@ test('measures staging lag against local two-player reference @staging', async (
   await contextTwo.close();
 });
 
-test('starts a staged socket match after both players connect on Vercel/Render @staging', async ({ browser }) => {
-  const { contextOne, contextTwo, hostPage, guestPage, roomId } = await createStartedOnlineMatch(browser, {
+test('starts a staged socket match after both players connect on Vercel/Render @staging', async ({ browser, request }) => {
+  const { contextOne, contextTwo, hostPage, guestPage, roomId } = await createStartedOnlineMatch(browser, request, {
     roomId: createShortRoomId('start')
   });
 

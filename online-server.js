@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { WebSocketServer } from 'ws';
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
@@ -835,7 +836,28 @@ function tickRoom(room) {
   }
 }
 
-const wss = new WebSocketServer({ port: PORT, perMessageDeflate: false });
+const server = http.createServer((req, res) => {
+  const url = req.url || '/';
+  if (url === '/health' || url === '/ready' || url === '/') {
+    const body = JSON.stringify({
+      ok: true,
+      service: 'tennis-table-ws',
+      rooms: rooms.size,
+      clients: clients.size,
+      now: Date.now()
+    });
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    });
+    res.end(body);
+    return;
+  }
+  res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify({ ok: false, message: 'Not found' }));
+});
+
+const wss = new WebSocketServer({ server, perMessageDeflate: false });
 
 wss.on('connection', (ws) => {
   if (ws._socket && typeof ws._socket.setNoDelay === 'function') {
@@ -950,4 +972,6 @@ setInterval(() => {
   for (const room of rooms.values()) broadcastRoom(room);
 }, SNAPSHOT_MS);
 
-console.log(`WebSocket server listening on ws://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`WebSocket server listening on ws://localhost:${PORT}`);
+});

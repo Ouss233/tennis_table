@@ -1215,12 +1215,14 @@ const onlineState = {
   connectAttempt: 0,
   connectSessionId: 0,
   reconnectTimer: 0,
+  connectAttemptTimer: 0,
   manualDisconnect: false
 };
 const ONLINE_FRAME_MS = 1000 / 60;
 const ONLINE_EXTRAPOLATION_MAX_FRAMES = 3;
 const ONLINE_DEBUG_LOG_LIMIT = 240;
-const ONLINE_CONNECT_RETRY_DELAYS_MS = [0, 1200, 2400, 4000];
+const ONLINE_CONNECT_RETRY_DELAYS_MS = [0, 1000, 2000, 3000];
+const ONLINE_CONNECT_ATTEMPT_TIMEOUT_MS = 5000;
 const onlineDebugLog = [];
 const motionCaptures = new Map();
 
@@ -1480,6 +1482,10 @@ function disconnectOnlineSession(){
   if(onlineState.reconnectTimer){
     clearTimeout(onlineState.reconnectTimer);
     onlineState.reconnectTimer = 0;
+  }
+  if(onlineState.connectAttemptTimer){
+    clearTimeout(onlineState.connectAttemptTimer);
+    onlineState.connectAttemptTimer = 0;
   }
   if(onlineState.socket){
     try { onlineState.socket.close(); } catch {}
@@ -1982,6 +1988,11 @@ function clearOnlineReconnectTimer(){
   clearTimeout(onlineState.reconnectTimer);
   onlineState.reconnectTimer = 0;
 }
+function clearOnlineConnectAttemptTimer(){
+  if(!onlineState.connectAttemptTimer) return;
+  clearTimeout(onlineState.connectAttemptTimer);
+  onlineState.connectAttemptTimer = 0;
+}
 function scheduleOnlineReconnect(sessionId, nextAttempt, reason){
   if(!isOnlineMode() || onlineState.manualDisconnect || sessionId !== onlineState.connectSessionId) return;
   if(nextAttempt > ONLINE_CONNECT_RETRY_DELAYS_MS.length){
@@ -2022,6 +2033,23 @@ function connectOnlineLobbyAttempt(sessionId, attempt){
 
   let opened = false;
   const isStaleSocket = () => sessionId !== onlineState.connectSessionId || onlineState.socket !== socket;
+  const failPendingAttempt = (reason) => {
+    if(opened || isStaleSocket() || onlineState.manualDisconnect) return;
+    clearOnlineConnectAttemptTimer();
+    onlineState.socket = null;
+    pushOnlineDebugLog('socket_attempt_failed', {
+      reason,
+      attempt,
+      sessionId
+    });
+    try { socket.close(); } catch {}
+    scheduleOnlineReconnect(sessionId, attempt + 1, reason);
+  };
+
+  clearOnlineConnectAttemptTimer();
+  onlineState.connectAttemptTimer = window.setTimeout(() => {
+    failPendingAttempt('attempt_timeout');
+  }, ONLINE_CONNECT_ATTEMPT_TIMEOUT_MS);
 
   socket.addEventListener('open', () => {
     if(isStaleSocket()){
@@ -2029,6 +2057,7 @@ function connectOnlineLobbyAttempt(sessionId, attempt){
       return;
     }
     opened = true;
+    clearOnlineConnectAttemptTimer();
     clearOnlineReconnectTimer();
     onlineState.connected = true;
     onlineState.connecting = false;
@@ -2103,6 +2132,7 @@ function connectOnlineLobbyAttempt(sessionId, attempt){
 
   socket.addEventListener('close', () => {
     if(isStaleSocket()) return;
+    clearOnlineConnectAttemptTimer();
     onlineState.socket = null;
     pushOnlineDebugLog('socket_close', {
       roomId: onlineState.roomId || null,
@@ -2138,6 +2168,7 @@ function connectOnlineLobbyAttempt(sessionId, attempt){
     if(!opened){
       statusEl.textContent = `Connexion au serveur impossible, nouvelle tentative (${Math.min(attempt + 1, ONLINE_CONNECT_RETRY_DELAYS_MS.length)}/${ONLINE_CONNECT_RETRY_DELAYS_MS.length})...`;
       updateConnectionState('connecting', 'Etat: reconnexion en cours...');
+      failPendingAttempt('socket_error');
       return;
     }
     statusEl.textContent = 'Impossible de joindre le serveur WebSocket.';

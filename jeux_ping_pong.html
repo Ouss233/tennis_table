@@ -1576,7 +1576,7 @@ function updateLobbyControls(){
 }
 function applyLobbySnapshot(snapshot){
   const lobbySeq = Number(snapshot.lobbySeq || 0);
-  if(lobbySeq && onlineState.lastLobbySeq && lobbySeq < onlineState.lastLobbySeq){
+  if(lobbySeq && onlineState.lastLobbySeq && lobbySeq <= onlineState.lastLobbySeq){
     pushOnlineDebugLog('lobby_snapshot_ignored', {
       lobbySeq,
       previousLobbySeq: onlineState.lastLobbySeq
@@ -1613,6 +1613,28 @@ function applyRoomStatus(snapshot){
     onlineState.lastLobbySeq = snapshot.lobbySeq;
   }
   if(snapshot.hostId != null && onlineState.clientId != null){
+    onlineState.isHost = snapshot.hostId === onlineState.clientId;
+  }
+  updatePlayerBanners();
+  updateScoreLabel();
+  updateBonusSideLabels();
+  updateLobbyControls();
+}
+function applyRoomReady(snapshot){
+  if(!snapshot) return;
+  pushOnlineDebugLog('room_ready', {
+    roomId: snapshot.roomId || onlineState.roomId,
+    hostId: snapshot.hostId ?? null,
+    waitingForOpponent: !!snapshot.waitingForOpponent
+  });
+  if(snapshot.roomId) onlineState.roomId = snapshot.roomId;
+  if(snapshot.role) onlineState.role = snapshot.role;
+  onlineState.inRoom = true;
+  onlineState.waiting = !!snapshot.waitingForOpponent;
+  onlineState.names = snapshot.names || onlineState.names;
+  if(typeof snapshot.isHost === 'boolean'){
+    onlineState.isHost = snapshot.isHost;
+  } else if(snapshot.hostId != null && onlineState.clientId != null){
     onlineState.isHost = snapshot.hostId === onlineState.clientId;
   }
   updatePlayerBanners();
@@ -1991,6 +2013,8 @@ function connectOnlineLobby(){
       if(payload.playerName) playerNameEl.value = payload.playerName;
     } else if(payload.type === 'lobby'){
       applyLobbySnapshot(payload);
+    } else if(payload.type === 'room_ready'){
+      applyRoomReady(payload);
     } else if(payload.type === 'room_status'){
       applyRoomStatus(payload);
     } else if(payload.type === 'room_joined'){

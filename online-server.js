@@ -412,14 +412,38 @@ function joinExistingRoom(ws, payload) {
 
 function startRoomGame(ws, payload) {
   const client = getClientMeta(ws);
-  if (!client || !client.roomId) return;
+  if (!client || !client.roomId) {
+    logServerEvent('start_game_rejected', {
+      clientId: client?.id ?? null,
+      roomId: client?.roomId || null,
+      reason: 'not_in_room'
+    });
+    return;
+  }
   const room = rooms.get(client.roomId);
-  if (!room) return;
+  if (!room) {
+    logServerEvent('start_game_rejected', {
+      clientId: client.id,
+      roomId: client.roomId,
+      reason: 'room_missing'
+    });
+    return;
+  }
   if (room.hostId !== client.id) {
+    logServerEvent('start_game_rejected', {
+      roomId: room.id,
+      clientId: client.id,
+      reason: 'not_host'
+    });
     send(ws, { type: 'error', message: 'Seul le createur de la room peut lancer la partie.' });
     return;
   }
   if (roomPlayerCount(room) < 2) {
+    logServerEvent('start_game_rejected', {
+      roomId: room.id,
+      clientId: client.id,
+      reason: 'waiting_for_opponent'
+    });
     send(ws, { type: 'error', message: 'Il faut 2 joueurs pour lancer la partie.' });
     return;
   }
@@ -859,6 +883,11 @@ wss.on('connection', (ws) => {
     }
 
     if (payload.type === 'start_game') {
+      const client = clients.get(ws);
+      logServerEvent('start_game_received', {
+        clientId: client?.id ?? null,
+        roomId: client?.roomId || null
+      });
       startRoomGame(ws, payload);
       return;
     }

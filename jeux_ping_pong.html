@@ -2718,18 +2718,46 @@ joinRoomBtn.addEventListener('click', ()=>{
 });
 startRoomBtn.addEventListener('click', ()=>{
   if(!onlineState.connected){
+    pushOnlineDebugLog('start_game_blocked', {
+      reason: 'not_connected',
+      roomId: onlineState.roomId || null,
+      isHost: onlineState.isHost,
+      waiting: onlineState.waiting,
+      inRoom: onlineState.inRoom
+    });
     statusEl.textContent = 'Connectez-vous au serveur avant de lancer la partie.';
     return;
   }
   if(!onlineState.inRoom){
+    pushOnlineDebugLog('start_game_blocked', {
+      reason: 'not_in_room',
+      roomId: onlineState.roomId || null,
+      isHost: onlineState.isHost,
+      waiting: onlineState.waiting,
+      inRoom: onlineState.inRoom
+    });
     statusEl.textContent = 'Créez ou rejoignez une room avant de lancer la partie.';
     return;
   }
   if(!onlineState.isHost){
+    pushOnlineDebugLog('start_game_blocked', {
+      reason: 'not_host',
+      roomId: onlineState.roomId || null,
+      isHost: onlineState.isHost,
+      waiting: onlineState.waiting,
+      inRoom: onlineState.inRoom
+    });
     statusEl.textContent = 'Seul l’hôte peut lancer la partie.';
     return;
   }
   if(onlineState.waiting){
+    pushOnlineDebugLog('start_game_blocked', {
+      reason: 'waiting_for_opponent',
+      roomId: onlineState.roomId || null,
+      isHost: onlineState.isHost,
+      waiting: onlineState.waiting,
+      inRoom: onlineState.inRoom
+    });
     statusEl.textContent = 'En attente du deuxième joueur avant de lancer la partie.';
     return;
   }
